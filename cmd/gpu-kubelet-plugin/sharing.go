@@ -63,7 +63,8 @@ const (
 )
 
 type HAMiCoreManager struct {
-	nvdevlib *deviceLib
+	hostHookPath string
+	nvdevlib     *deviceLib
 }
 
 type TimeSlicingManager struct {
@@ -109,7 +110,8 @@ type MpsControlDaemonTemplateData struct {
 
 func NewHAMiCoreManager(deviceLib *deviceLib) *HAMiCoreManager {
 	return &HAMiCoreManager{
-		nvdevlib: deviceLib,
+		nvdevlib:     deviceLib,
+		hostHookPath: "/usr/local",
 	}
 }
 
@@ -126,8 +128,7 @@ func (m *HAMiCoreManager) getConsumableCapacityMap(claim *resourceapi.ResourceCl
 }
 
 func (m *HAMiCoreManager) GetCDIContainerEdits(claim *resourceapi.ResourceClaim, devs AllocatableDevices) *cdiapi.ContainerEdits {
-	hostHookPath := "/usr/local"
-	cacheFileHostDirectory := fmt.Sprintf("%s/vgpu/claims/%s", hostHookPath, claim.Name)
+	cacheFileHostDirectory := fmt.Sprintf("%s/vgpu/claims/%s", m.hostHookPath, claim.UID)
 	// TODO: We should check the status of claim, becasue there may be two pod share the claim
 	os.RemoveAll(cacheFileHostDirectory)
 	os.MkdirAll(cacheFileHostDirectory, 0777)
@@ -135,7 +136,7 @@ func (m *HAMiCoreManager) GetCDIContainerEdits(claim *resourceapi.ResourceClaim,
 
 	hamiEnvs := []string{}
 	// TOOD: Get SM Limit from Claim's Annotation
-	hamiEnvs = append(hamiEnvs, fmt.Sprintf("CUDA_DEVICE_MEMORY_SHARED_CACHE=%s", fmt.Sprintf("%s/vgpu/%v.cache", hostHookPath, uuid.New().String())))
+	hamiEnvs = append(hamiEnvs, fmt.Sprintf("CUDA_DEVICE_MEMORY_SHARED_CACHE=%s", fmt.Sprintf("%s/vgpu/%v.cache", cacheFileHostDirectory, uuid.New().String())))
 
 	devCapMap := m.getConsumableCapacityMap(claim)
 	idx := 0
@@ -173,18 +174,18 @@ func (m *HAMiCoreManager) GetCDIContainerEdits(claim *resourceapi.ResourceClaim,
 			Env: hamiEnvs,
 			Mounts: []*cdispec.Mount{
 				{
-					ContainerPath: hostHookPath + "/vgpu/libvgpu.so",
-					HostPath:      hostHookPath + "/vgpu/libvgpu.so",
+					ContainerPath: m.hostHookPath + "/vgpu/libvgpu.so",
+					HostPath:      m.hostHookPath + "/vgpu/libvgpu.so",
 					Options:       []string{"ro", "nosuid", "nodev", "bind"},
 				},
 				// TODO: Check CUDA_DISABLE_CONTROL env before mount ld.so.preload
 				{
 					ContainerPath: "/etc/ld.so.preload",
-					HostPath:      hostHookPath + "/vgpu/ld.so.preload",
+					HostPath:      m.hostHookPath + "/vgpu/ld.so.preload",
 					Options:       []string{"ro", "nosuid", "nodev", "bind"},
 				},
 				{
-					ContainerPath: hostHookPath + "/vgpu",
+					ContainerPath: m.hostHookPath + "/vgpu",
 					HostPath:      cacheFileHostDirectory,
 					Options:       []string{"rw", "nosuid", "nodev", "bind"},
 				},
@@ -198,7 +199,9 @@ func (m *HAMiCoreManager) GetCDIContainerEdits(claim *resourceapi.ResourceClaim,
 	}
 }
 
-func (m *HAMiCoreManager) Clearup(PreparedDeviceList) error {
+func (m *HAMiCoreManager) Cleanup(claimUID string, pl PreparedDeviceList) error {
+	path := fmt.Sprintf("%s/vgpu/claims/%s", m.hostHookPath, claimUID)
+	os.RemoveAll(path)
 	return nil
 }
 
