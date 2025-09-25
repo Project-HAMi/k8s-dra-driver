@@ -1,0 +1,90 @@
+---
+apiVersion: resource.k8s.io/v1
+kind: DeviceClass
+metadata:
+  name: hami-core-gpu.project-hami.io
+spec:
+  selectors:
+  - cel:
+      expression: |-
+        device.driver == "hami-core-gpu.project-hami.io"
+---
+apiVersion: v1
+kind: Namespace
+metadata:
+  name: test-dra
+
+---
+apiVersion: resource.k8s.io/v1
+kind: ResourceClaim
+metadata:
+  namespace: test-dra
+  name: single-gpu-0
+spec:
+  devices:
+    requests:
+    - name: single-gpu
+      exactly:
+        deviceClassName: hami-core-gpu.project-hami.io
+        selectors:
+          - cel:
+              expression: |-
+                device.attributes["hami-core-gpu.project-hami.io"].type == "hami-gpu"
+        capacity:
+          requests:
+            cores: 30
+            memory: "4Gi"
+
+---
+apiVersion: resource.k8s.io/v1
+kind: ResourceClaim
+metadata:
+  namespace: test-dra
+  name: double-gpu-0
+spec:
+  devices:
+    requests:
+    - name: double-gpu-0-0
+      exactly:
+        deviceClassName: hami-core-gpu.project-hami.io
+        selectors:
+          - cel:
+              expression: |-
+                device.attributes["hami-core-gpu.project-hami.io"].type == "hami-gpu"
+        capacity:
+          requests:
+            cores: 30
+            memory: "4Gi"
+    - name: double-gpu-0-1
+      exactly:
+        deviceClassName: hami-core-gpu.project-hami.io
+        selectors:
+          - cel:
+              expression: |-
+                device.attributes["hami-core-gpu.project-hami.io"].type == "hami-gpu"
+        capacity:
+          requests:
+            cores: 60
+            memory: "8Gi"
+
+---
+apiVersion: resource.k8s.io/v1
+kind: ResourceClaimTemplate
+metadata:
+  namespace: test-dra
+  name: single-gpu-tpl
+spec:
+  spec:
+    devices:
+      requests:
+      - name: single-gpu
+        exactly:
+          deviceClassName: hami-core.project-hami.io
+          selectors:
+            - cel:
+                expression: |-
+                  device.attributes["hami-core-gpu.project-hami.io"].type == "hami-gpu"
+          capacity:
+            requests:
+              cores: 30
+              memory: "4Gi"
