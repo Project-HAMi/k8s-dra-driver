@@ -27,6 +27,9 @@ VERSION  ?= v0.0.1-dev
 # (e.g., in context of Helm).
 vVERSION := v$(VERSION:v%=%)
 
+# The image to build hami-core lib
+HAMI_CORE_BUILD_IMAGE=nvidia/cuda:12.3.2-devel-ubuntu20.04
+
 GOLANG_VERSION := $(shell ./hack/golang-version.sh)
 TOOLKIT_CONTAINER_IMAGE := $(shell ./hack/toolkit-container-image.sh)
 BASH_STATIC_GIT_REF := 021f5f29f665c92ca16a369d9f27e288c3aed0c6
@@ -43,6 +46,7 @@ VERSION_W_COMMIT = $(VERSION)-$(GIT_COMMIT_SHORT)
 
 # Shape: 25.8.0-dev-f2eaddd6-chart (no leading v)
 VERSION_GHCR_CHART ?= $(VERSION_W_COMMIT:v%=%)-chart
+
 
 print-%:
 	@echo $($*)

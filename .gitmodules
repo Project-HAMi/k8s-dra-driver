@@ -1,0 +1,3 @@
+[submodule "lib/hami-core"]
+	path = lib/hami-core
+	url = https://github.com/Project-HAMi/HAMi-core

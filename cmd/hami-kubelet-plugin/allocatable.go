@@ -31,7 +31,7 @@ type AllocatableDevice struct {
 }
 
 func (d AllocatableDevice) Type() string {
-	if d.HAMiGpu != nil {
+	if d.Gpu != nil {
 		return GpuDeviceType
 	}
 	if d.HAMiGpu != nil {

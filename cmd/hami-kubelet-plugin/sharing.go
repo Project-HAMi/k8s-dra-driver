@@ -133,7 +133,7 @@ func (m *HAMiCoreManager) GetCDIContainerEdits(claim *resourceapi.ResourceClaim,
 
 	hamiEnvs := []string{}
 	// TOOD: Get SM Limit from Claim's Annotation
-	hamiEnvs = append(hamiEnvs, fmt.Sprintf("CUDA_DEVICE_MEMORY_SHARED_CACHE=%s", fmt.Sprintf("%s/vgpu/%v.cache", cacheFileHostDirectory, uuid.New().String())))
+	hamiEnvs = append(hamiEnvs, fmt.Sprintf("CUDA_DEVICE_MEMORY_SHARED_CACHE=%s", fmt.Sprintf("%s/%v.cache", cacheFileHostDirectory, uuid.New().String())))
 
 	devCapMap := m.getConsumableCapacityMap(claim)
 	idx := 0
@@ -171,6 +171,11 @@ func (m *HAMiCoreManager) GetCDIContainerEdits(claim *resourceapi.ResourceClaim,
 			Env: hamiEnvs,
 			Mounts: []*cdispec.Mount{
 				{
+					ContainerPath: cacheFileHostDirectory,
+					HostPath:      cacheFileHostDirectory,
+					Options:       []string{"rw", "nosuid", "nodev", "bind"},
+				},
+				{
 					ContainerPath: m.hostHookPath + "/vgpu/libvgpu.so",
 					HostPath:      m.hostHookPath + "/vgpu/libvgpu.so",
 					Options:       []string{"ro", "nosuid", "nodev", "bind"},
@@ -180,11 +185,6 @@ func (m *HAMiCoreManager) GetCDIContainerEdits(claim *resourceapi.ResourceClaim,
 					ContainerPath: "/etc/ld.so.preload",
 					HostPath:      m.hostHookPath + "/vgpu/ld.so.preload",
 					Options:       []string{"ro", "nosuid", "nodev", "bind"},
-				},
-				{
-					ContainerPath: m.hostHookPath + "/vgpu",
-					HostPath:      cacheFileHostDirectory,
-					Options:       []string{"rw", "nosuid", "nodev", "bind"},
 				},
 				{
 					ContainerPath: "/tmp/vgpulock",

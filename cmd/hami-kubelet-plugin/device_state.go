@@ -251,7 +251,8 @@ func (s *DeviceState) prepareDevices(ctx context.Context, claim *resourceapi.Res
 				break
 			}
 			if len(c.Requests) == 0 {
-				if _, ok := c.Config.(*configapi.GpuConfig); ok && device.Type() != GpuDeviceType {
+				klog.Info("Device Type: %s", device.Type())
+				if _, ok := c.Config.(*configapi.GpuConfig); ok && device.Type() != GpuDeviceType && device.Type() != HAMiGpuDeviceType {
 					continue
 				}
 				if _, ok := c.Config.(*configapi.MigDeviceConfig); ok && device.Type() != MigDeviceType {
@@ -328,6 +329,11 @@ func (s *DeviceState) prepareDevices(ctx context.Context, claim *resourceapi.Res
 			case GpuDeviceType:
 				preparedDevice.Gpu = &PreparedGpu{
 					Info:   s.allocatable[result.Device].Gpu,
+					Device: device,
+				}
+			case HAMiGpuDeviceType:
+				preparedDevice.HAMiGpu = &PreparedHAMiGpu{
+					Info:   s.allocatable[result.Device].HAMiGpu,
 					Device: device,
 				}
 			case MigDeviceType:

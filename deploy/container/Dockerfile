@@ -1,5 +1,19 @@
 ARG TOOLKIT_CONTAINER_IMAGE=unknown
 
+FROM --platform=$BUILDPLATFORM nvidia/cuda:12.3.2-devel-ubuntu20.04 AS hami-core-build
+
+ENV DEBIAN_FRONTEND=noninteractive
+RUN apt-get -y update; apt-get -y install cmake git
+COPY . /k8s-dra-driver
+WORKDIR /k8s-dra-driver/lib/hami-core
+RUN bash ./build.sh
+
+# Add hami-lib into distroless image
+RUN chmod +x /k8s-dra-driver/lib/nvidia/vgpu-init.sh
+RUN mkdir -p /k8s-dra-driver/lib/local/lib/hami
+RUN mv /k8s-dra-driver/lib/hami-core/build/libvgpu.so /k8s-dra-driver/lib/local/lib/hami
+RUN mv /k8s-dra-driver/lib/nvidia/ld.so.preload /k8s-dra-driver/lib/local/lib/hami
+
 # Run build with binaries native to the current build platform.
 FROM --platform=$BUILDPLATFORM nvcr.io/nvidia/base/ubuntu:jammy-20250619 AS build
 
@@ -103,9 +117,13 @@ LABEL description="HAMi-Core DRA Driver for NVIDIA GPUs"
 LABEL org.opencontainers.image.description="HAMI-Core DRA Driver for NVIDIA GPUs"
 LABEL org.opencontainers.image.source="https://github.com/Project-HAMi/k8s-dra-driver"
 
+
 COPY --from=toolkit /artifacts/rpm/usr/bin/nvidia-cdi-hook   /usr/bin/nvidia-cdi-hook
 COPY --from=build   /bashbuild/bash                          /bin/bash
 COPY --from=build   /artifacts/hami-kubelet-plugin           /usr/bin/hami-kubelet-plugin
+
+COPY --from=hami-core-build /k8s-dra-driver/lib/local /usr/local
+COPY --from=hami-core-build /k8s-dra-driver/lib/nvidia/vgpu-init.sh /usr/bin/vgpu-init.sh
 
 COPY --from=build /etc/passwd /etc/passwd
 COPY --from=build /etc/group /etc/group
@@ -114,3 +132,5 @@ USER root:root
 # Smoke-test executables (provide early build feedback).
 RUN ["/usr/bin/hami-kubelet-plugin", "--version"]
 RUN ["/bin/bash", "--version"]
+
+ENTRYPOINT ["/bin/bash"]
