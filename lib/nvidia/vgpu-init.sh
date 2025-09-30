@@ -1,5 +1,7 @@
 #!/bin/bash
 
+mkdir -p /tmp/vgpulock
+
 # Check if the destination directory is provided as an argument
 if [ -z "$1" ]; then
     echo "Usage: $0 <destination_directory>"
