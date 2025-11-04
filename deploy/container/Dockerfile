@@ -3,7 +3,7 @@ ARG TOOLKIT_CONTAINER_IMAGE=unknown
 FROM --platform=$BUILDPLATFORM nvidia/cuda:12.3.2-devel-ubuntu20.04 AS hami-core-build
 
 ENV DEBIAN_FRONTEND=noninteractive
-RUN apt-get -y update; apt-get -y install cmake git
+RUN apt-get -y update; apt-get -y install cmake
 COPY . /k8s-dra-driver
 WORKDIR /k8s-dra-driver/lib/hami-core
 RUN bash ./build.sh
