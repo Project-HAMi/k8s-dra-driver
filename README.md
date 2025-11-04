@@ -9,6 +9,17 @@ The HAMi DRA Driver brings the support of DRA for [HAMi-Core](https://github.com
 
 ## Installation
 
+### Prerequisites
+
+The list of prerequisites for running the DRA Driver for HAMi-Core is described below
+- NVIDIA drivers >= 440
+- nvidia-docker version > 2.0
+- default runtime configured as nvidia for containerd/docker/cri-o container runtime
+- Kubernetes version >= 1.34 with DRA Consumable Capacity feature enabled
+- glibc >= 2.17 & glibc < 2.30
+- kernel version >= 3.10
+
+
 Please check the [DaemonSet configuration](demo/yaml/ds.yaml) in the demo/yaml directory. We are working on a Helm Chart for this DRA Driver, it will be available in the near future.
 
 
