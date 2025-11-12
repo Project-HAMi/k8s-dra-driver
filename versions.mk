@@ -47,6 +47,9 @@ VERSION_W_COMMIT = $(VERSION)-$(GIT_COMMIT_SHORT)
 # Shape: 25.8.0-dev-f2eaddd6-chart (no leading v)
 VERSION_GHCR_CHART ?= $(VERSION_W_COMMIT:v%=%)-chart
 
+# nvVersion represents the version of k8s-dra-drvier-gpu that this project is based on
+NVVERSION := 25.8.0
+vNVVERSION := v$(NVVERSION:v%=%)
 
 print-%:
 	@echo $($*)

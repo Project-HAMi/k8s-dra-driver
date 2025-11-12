@@ -56,7 +56,7 @@ cmds: $(CMD_TARGETS)
 $(CMD_TARGETS): cmd-%:
 	CGO_LDFLAGS_ALLOW='-Wl,--unresolved-symbols=ignore-in-object-files' \
 		CC=$(CC) CGO_ENABLED=1 GOOS=$(GOOS) GOARCH=$(GOARCH) GO111MODULE=on GOPROXY=https://goproxy.cn \
-		go build -ldflags "-s -w -X github.com/NVIDIA/k8s-dra-driver-gpu/internal/info.version=v25.3.2 -X github.com/Project-HAMi/k8s-dra-driver/pkg/version.version=0.0.2" $(COMMAND_BUILD_OPTIONS) $(MODULE)/cmd/$(*)
+		go build -ldflags "-s -w -X github.com/NVIDIA/k8s-dra-driver-gpu/internal/info.version=${vNVVERSION} -X github.com/Project-HAMi/k8s-dra-driver/pkg/version.version=${vNVVERSION}" $(COMMAND_BUILD_OPTIONS) $(MODULE)/cmd/$(*)
 
 build:
 	CC=$(CC) GOOS=$(GOOS) GOARCH=$(GOARCH) go build ./...

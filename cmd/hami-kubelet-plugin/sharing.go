@@ -1,18 +1,18 @@
 /*
-Copyright 2025 The HAMi Authors.
-
-Licensed under the Apache License, Version 2.0 (the "License");
-you may not use this file except in compliance with the License.
-You may obtain a copy of the License at
-
-    http://www.apache.org/licenses/LICENSE-2.0
-
-Unless required by applicable law or agreed to in writing, software
-distributed under the License is distributed on an "AS IS" BASIS,
-WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
-See the License for the specific language governing permissions and
-limitations under the License.
-*/
+ * Copyright (c) 2023, NVIDIA CORPORATION.  All rights reserved.
+ *
+ * Licensed under the Apache License, Version 2.0 (the "License");
+ * you may not use this file except in compliance with the License.
+ * You may obtain a copy of the License at
+ *
+ *     http://www.apache.org/licenses/LICENSE-2.0
+ *
+ * Unless required by applicable law or agreed to in writing, software
+ * distributed under the License is distributed on an "AS IS" BASIS,
+ * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+ * See the License for the specific language governing permissions and
+ * limitations under the License.
+ */
 
 package main
 
@@ -23,21 +23,17 @@ import (
 	"crypto/sha256"
 	"encoding/hex"
 	"fmt"
-	"maps"
 	"os"
 	"os/exec"
+	"path/filepath"
 	"slices"
 	"strconv"
 	"strings"
 	"text/template"
 	"time"
 
-	"github.com/google/uuid"
-
 	appsv1 "k8s.io/api/apps/v1"
-	resourceapi "k8s.io/api/resource/v1"
 	"k8s.io/apimachinery/pkg/api/errors"
-	"k8s.io/apimachinery/pkg/api/resource"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/apis/meta/v1/unstructured"
 	"k8s.io/apimachinery/pkg/labels"
@@ -52,18 +48,14 @@ import (
 	cdispec "tags.cncf.io/container-device-interface/specs-go"
 
 	configapi "github.com/NVIDIA/k8s-dra-driver-gpu/api/nvidia.com/resource/v1beta1"
+	"github.com/NVIDIA/k8s-dra-driver-gpu/pkg/featuregates"
 )
 
 const (
-	MpsRoot                      = DriverPluginPath + "/mps"
+	MpsControlFilesDirName       = "mps"
 	MpsControlDaemonTemplatePath = "/templates/mps-control-daemon.tmpl.yaml"
 	MpsControlDaemonNameFmt      = "mps-control-daemon-%v" // Fill with ClaimUID
 )
-
-type HAMiCoreManager struct {
-	hostHookPath string
-	nvdevlib     *deviceLib
-}
 
 type TimeSlicingManager struct {
 	nvdevlib *deviceLib
@@ -103,103 +95,7 @@ type MpsControlDaemonTemplateData struct {
 	MpsPipeDirectory                string
 	MpsLogDirectory                 string
 	MpsImageName                    string
-}
-
-func NewHAMiCoreManager(deviceLib *deviceLib) *HAMiCoreManager {
-	return &HAMiCoreManager{
-		nvdevlib:     deviceLib,
-		hostHookPath: "/usr/local",
-	}
-}
-
-func (m *HAMiCoreManager) getConsumableCapacityMap(claim *resourceapi.ResourceClaim) map[string]map[resourceapi.QualifiedName]resource.Quantity {
-	resMap := map[string]map[resourceapi.QualifiedName]resource.Quantity{}
-	for _, result := range claim.Status.Allocation.Devices.Results {
-		devName := result.Device
-		if _, exists := resMap[devName]; !exists {
-			resMap[devName] = map[resourceapi.QualifiedName]resource.Quantity{}
-		}
-		maps.Copy(resMap[devName], result.ConsumedCapacity)
-	}
-	return resMap
-}
-
-func (m *HAMiCoreManager) GetCDIContainerEdits(claim *resourceapi.ResourceClaim, devs AllocatableDevices) *cdiapi.ContainerEdits {
-	cacheFileHostDirectory := fmt.Sprintf("%s/vgpu/claims/%s", m.hostHookPath, claim.UID)
-	// TODO: We should check the status of claim, becasue there may be two pod share the claim
-	os.RemoveAll(cacheFileHostDirectory)
-	os.MkdirAll(cacheFileHostDirectory, 0777)
-	os.Chmod(cacheFileHostDirectory, 0777)
-
-	hamiEnvs := []string{}
-	// TOOD: Get SM Limit from Claim's Annotation
-	hamiEnvs = append(hamiEnvs, fmt.Sprintf("CUDA_DEVICE_MEMORY_SHARED_CACHE=%s", fmt.Sprintf("%s/%v.cache", cacheFileHostDirectory, uuid.New().String())))
-
-	devCapMap := m.getConsumableCapacityMap(claim)
-	idx := 0
-	for name, dev := range devs {
-		// TODO: The idx here may not equals to the index in nvidia-smi, So we need to find a solution to solve it
-		klog.Warningf("HAMiCoreManager GetCDIContainerEdits for dev: %s\n", name)
-		capNameSMLimit := resourceapi.QualifiedName("cores")
-		capNameMemoryLimit := resourceapi.QualifiedName("memory")
-		SMLimitEnv := fmt.Sprintf("CUDA_DEVICE_SM_LIMIT_%d=%s", idx, "60")
-		memoryLimit := string(strconv.FormatUint(dev.HAMiGpu.memoryBytes/1024/1024, 10)) + "m"
-		MemoryLimitEnv := fmt.Sprintf("CUDA_DEVICE_MEMORY_LIMIT_%d=%s", idx, memoryLimit)
-		// TODO: Loop in a map getting from HAMiCoreManager
-		if _, ok := devCapMap[name]; ok {
-			if _, ok := devCapMap[name][capNameSMLimit]; ok {
-				q := devCapMap[name][capNameSMLimit]
-				val, succ := q.AsInt64()
-				if succ {
-					SMLimitEnv = fmt.Sprintf("CUDA_DEVICE_SM_LIMIT_%d=%s", idx, strconv.FormatInt(val, 10))
-				}
-			}
-			if _, ok := devCapMap[name][capNameMemoryLimit]; ok {
-				q := devCapMap[name][capNameMemoryLimit]
-				val, succ := q.AsInt64()
-				if succ {
-					MemoryLimitEnv = fmt.Sprintf("CUDA_DEVICE_MEMORY_LIMIT_%d=%s", idx, strconv.FormatInt(val/1024/1024, 10)+"m")
-				}
-			}
-		}
-		hamiEnvs = append(hamiEnvs, SMLimitEnv, MemoryLimitEnv)
-		idx++
-	}
-
-	return &cdiapi.ContainerEdits{
-		ContainerEdits: &cdispec.ContainerEdits{
-			Env: hamiEnvs,
-			Mounts: []*cdispec.Mount{
-				{
-					ContainerPath: cacheFileHostDirectory,
-					HostPath:      cacheFileHostDirectory,
-					Options:       []string{"rw", "nosuid", "nodev", "bind"},
-				},
-				{
-					ContainerPath: m.hostHookPath + "/vgpu/libvgpu.so",
-					HostPath:      m.hostHookPath + "/vgpu/libvgpu.so",
-					Options:       []string{"ro", "nosuid", "nodev", "bind"},
-				},
-				// TODO: Check CUDA_DISABLE_CONTROL env before mount ld.so.preload
-				{
-					ContainerPath: "/etc/ld.so.preload",
-					HostPath:      m.hostHookPath + "/vgpu/ld.so.preload",
-					Options:       []string{"ro", "nosuid", "nodev", "bind"},
-				},
-				{
-					ContainerPath: "/tmp/vgpulock",
-					HostPath:      "/tmp/vgpulock",
-					Options:       []string{"rw", "nosuid", "nodev", "bind"},
-				},
-			},
-		},
-	}
-}
-
-func (m *HAMiCoreManager) Cleanup(claimUID string, pl PreparedDeviceList) error {
-	path := fmt.Sprintf("%s/vgpu/claims/%s", m.hostHookPath, claimUID)
-	os.RemoveAll(path)
-	return nil
+	FeatureGates                    map[string]bool
 }
 
 func NewTimeSlicingManager(deviceLib *deviceLib) *TimeSlicingManager {
@@ -229,7 +125,9 @@ func (t *TimeSlicingManager) SetTimeSlice(devices UUIDProvider, config *configap
 	return nil
 }
 
-func NewMpsManager(config *Config, deviceLib *deviceLib, controlFilesRoot, hostDriverRoot, templatePath string) *MpsManager {
+func NewMpsManager(config *Config, deviceLib *deviceLib, hostDriverRoot, templatePath string) *MpsManager {
+	controlFilesRoot := filepath.Join(config.DriverPluginPath(), MpsControlFilesDirName)
+
 	return &MpsManager{
 		controlFilesRoot: controlFilesRoot,
 		hostDriverRoot:   hostDriverRoot,
@@ -303,6 +201,7 @@ func (m *MpsControlDaemon) Start(ctx context.Context, config *configapi.MpsConfi
 	klog.Infof("Starting MPS control daemon for '%v', with settings: %+v", m.id, config)
 
 	deviceUUIDs := m.devices.UUIDs()
+
 	templateData := MpsControlDaemonTemplateData{
 		NodeName:                        m.nodeName,
 		MpsControlDaemonNamespace:       m.namespace,
@@ -315,6 +214,7 @@ func (m *MpsControlDaemon) Start(ctx context.Context, config *configapi.MpsConfi
 		MpsPipeDirectory:                m.pipeDir,
 		MpsLogDirectory:                 m.logDir,
 		MpsImageName:                    m.manager.config.flags.imageName,
+		FeatureGates:                    featuregates.ToMap(),
 	}
 
 	if config != nil && config.DefaultActiveThreadPercentage != nil {
@@ -549,3 +449,4 @@ func getDefaultShmSize() string {
 	}
 	return fallbackSize
 }
+
