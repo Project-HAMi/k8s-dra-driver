@@ -1,18 +1,18 @@
 /*
-Copyright 2025 The HAMi Authors.
-
-Licensed under the Apache License, Version 2.0 (the "License");
-you may not use this file except in compliance with the License.
-You may obtain a copy of the License at
-
-    http://www.apache.org/licenses/LICENSE-2.0
-
-Unless required by applicable law or agreed to in writing, software
-distributed under the License is distributed on an "AS IS" BASIS,
-WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
-See the License for the specific language governing permissions and
-limitations under the License.
-*/
+ * Copyright (c) 2024, NVIDIA CORPORATION.  All rights reserved.
+ *
+ * Licensed under the Apache License, Version 2.0 (the "License");
+ * you may not use this file except in compliance with the License.
+ * You may obtain a copy of the License at
+ *
+ *     http://www.apache.org/licenses/LICENSE-2.0
+ *
+ * Unless required by applicable law or agreed to in writing, software
+ * distributed under the License is distributed on an "AS IS" BASIS,
+ * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+ * See the License for the specific language governing permissions and
+ * limitations under the License.
+ */
 
 package main
 
@@ -30,9 +30,9 @@ import (
 
 type GpuInfo struct {
 	UUID                  string `json:"uuid"`
-	index                 int
 	minor                 int
 	migEnabled            bool
+	vfioEnabled           bool
 	memoryBytes           uint64
 	productName           string
 	brand                 string
@@ -41,21 +41,12 @@ type GpuInfo struct {
 	driverVersion         string
 	cudaDriverVersion     string
 	pcieBusID             string
-	pcieRootAttr          deviceattribute.DeviceAttribute
+	pcieRootAttr          *deviceattribute.DeviceAttribute
 	migProfiles           []*MigProfileInfo
-}
-
-type HAMiGpuInfo struct {
-	GpuInfo
-	// hamiSplitCounter uint
-	// hamiIndex        int
-	// hamiSMLimit      uint
-	// hamiMemoryBytes  uint64
 }
 
 type MigDeviceInfo struct {
 	UUID          string `json:"uuid"`
-	index         int
 	profile       string
 	parent        *GpuInfo
 	placement     *MigDevicePlacement
@@ -64,7 +55,21 @@ type MigDeviceInfo struct {
 	ciProfileInfo *nvml.ComputeInstanceProfileInfo
 	ciInfo        *nvml.ComputeInstanceInfo
 	pcieBusID     string
-	pcieRootAttr  deviceattribute.DeviceAttribute
+	pcieRootAttr  *deviceattribute.DeviceAttribute
+}
+
+type VfioDeviceInfo struct {
+	UUID                   string `json:"uuid"`
+	deviceID               string
+	vendorID               string
+	index                  int
+	parent                 *GpuInfo
+	productName            string
+	pcieBusID              string
+	pcieRootAttr           *deviceattribute.DeviceAttribute
+	numaNode               int
+	iommuGroup             int
+	addressableMemoryBytes uint64
 }
 
 type MigProfileInfo struct {
@@ -84,48 +89,12 @@ func (d *GpuInfo) CanonicalName() string {
 	return fmt.Sprintf("gpu-%d", d.minor)
 }
 
-func (d *HAMiGpuInfo) CanonicalName() string {
-	// return fmt.Sprintf("hami-gpu-%d-%d", d.minor, d.hamiIndex)
-	return fmt.Sprintf("hami-gpu-%d", d.minor)
-}
-
 func (d *MigDeviceInfo) CanonicalName() string {
 	return fmt.Sprintf("gpu-%d-mig-%d-%d-%d", d.parent.minor, d.giInfo.ProfileId, d.placement.Start, d.placement.Size)
 }
 
-func (d *GpuInfo) CanonicalIndex() string {
-	return fmt.Sprintf("%d", d.index)
-}
-
-func (d *HAMiGpuInfo) CanonicalIndex() string {
-	return fmt.Sprintf("%d", d.index)
-}
-
-func (d *MigDeviceInfo) CanonicalIndex() string {
-	return fmt.Sprintf("%d:%d", d.parent.index, d.index)
-}
-
-func (d *GpuInfo) GetSharedCounterSet() resourceapi.CounterSet {
-	return resourceapi.CounterSet{}
-}
-
-func (d *HAMiGpuInfo) GetSharedCounterSet() resourceapi.CounterSet {
-	// Note: Only hamiSMLimit and hamiMemoryBytes are supoorted in counter
-	return resourceapi.CounterSet{
-		Name: fmt.Sprintf("hami-gpu-%s", d.CanonicalIndex()),
-		Counters: map[string]resourceapi.Counter{
-			"hami-cores": resourceapi.Counter{
-				Value: *resource.NewQuantity(100, resource.DecimalSI),
-			},
-			"hami-memory": resourceapi.Counter{
-				Value: *resource.NewQuantity(int64(d.memoryBytes), resource.BinarySI),
-			},
-		},
-	}
-}
-
-func (d *MigDeviceInfo) GetSharedCounterSet() resourceapi.CounterSet {
-	return resourceapi.CounterSet{}
+func (d *VfioDeviceInfo) CanonicalName() string {
+	return fmt.Sprintf("gpu-vfio-%d", d.index)
 }
 
 func (d *GpuInfo) GetDevice() resourceapi.Device {
@@ -138,12 +107,6 @@ func (d *GpuInfo) GetDevice() resourceapi.Device {
 			"uuid": {
 				StringValue: &d.UUID,
 			},
-			"minor": {
-				IntValue: ptr.To(int64(d.minor)),
-			},
-			"index": {
-				IntValue: ptr.To(int64(d.index)),
-			},
 			"productName": {
 				StringValue: &d.productName,
 			},
@@ -165,7 +128,6 @@ func (d *GpuInfo) GetDevice() resourceapi.Device {
 			"pcieBusID": {
 				StringValue: &d.pcieBusID,
 			},
-			d.pcieRootAttr.Name: d.pcieRootAttr.Value,
 		},
 		Capacity: map[resourceapi.QualifiedName]resourceapi.DeviceCapacity{
 			"memory": {
@@ -173,77 +135,9 @@ func (d *GpuInfo) GetDevice() resourceapi.Device {
 			},
 		},
 	}
-	return device
-}
-
-func (d *HAMiGpuInfo) GetDevice() resourceapi.Device {
-	allowed := true
-	device := resourceapi.Device{
-		Name: d.CanonicalName(),
-		Attributes: map[resourceapi.QualifiedName]resourceapi.DeviceAttribute{
-			"type": {
-				StringValue: ptr.To(string(HAMiGpuDeviceType)),
-			},
-			"uuid": {
-				StringValue: &d.UUID,
-			},
-			"minor": {
-				IntValue: ptr.To(int64(d.minor)),
-			},
-			"index": {
-				IntValue: ptr.To(int64(d.index)),
-			},
-			// "hamiIndex": {
-			// 	IntValue: ptr.To(int64(d.hamiIndex)),
-			// },
-			"productName": {
-				StringValue: &d.productName,
-			},
-			"brand": {
-				StringValue: &d.brand,
-			},
-			"architecture": {
-				StringValue: &d.architecture,
-			},
-			"cudaComputeCapability": {
-				VersionValue: ptr.To(semver.MustParse(d.cudaComputeCapability).String()),
-			},
-			"driverVersion": {
-				VersionValue: ptr.To(semver.MustParse(d.driverVersion).String()),
-			},
-			"cudaDriverVersion": {
-				VersionValue: ptr.To(semver.MustParse(d.cudaDriverVersion).String()),
-			},
-			"pcieBusID": {
-				StringValue: &d.pcieBusID,
-			},
-			d.pcieRootAttr.Name: d.pcieRootAttr.Value,
-		},
-		Capacity: map[resourceapi.QualifiedName]resourceapi.DeviceCapacity{
-			"cores": {
-				Value: *resource.NewQuantity(int64(100), resource.DecimalSI),
-			},
-			"memory": {
-				Value: *resource.NewQuantity(int64(d.memoryBytes), resource.BinarySI),
-			},
-		},
-		AllowMultipleAllocations: &allowed,
+	if d.pcieRootAttr != nil {
+		device.Attributes[d.pcieRootAttr.Name] = d.pcieRootAttr.Value
 	}
-	// if d.hamiSplitCounter > 1 {
-	// 	device.ConsumesCounters = []resourceapi.DeviceCounterConsumption{
-	// 		{
-	// 			CounterSet: fmt.Sprintf("hami-gpu-%s", d.CanonicalIndex()),
-	// 			Counters: map[string]resourceapi.Counter{
-	// 				"hami-cores": resourceapi.Counter{
-	// 					Value: *resource.NewQuantity(int64(d.hamiSMLimit), resource.DecimalSI),
-	// 				},
-	// 				"hami-memory": resourceapi.Counter{
-	// 					Value: *resource.NewQuantity(int64(d.hamiMemoryBytes), resource.BinarySI),
-	// 				},
-	// 			},
-	// 		},
-	// 	}
-	// }
 	return device
 }
 
@@ -259,12 +153,6 @@ func (d *MigDeviceInfo) GetDevice() resourceapi.Device {
 			},
 			"parentUUID": {
 				StringValue: &d.parent.UUID,
-			},
-			"index": {
-				IntValue: ptr.To(int64(d.index)),
-			},
-			"parentIndex": {
-				IntValue: ptr.To(int64(d.parent.index)),
 			},
 			"profile": {
 				StringValue: &d.profile,
@@ -290,7 +178,6 @@ func (d *MigDeviceInfo) GetDevice() resourceapi.Device {
 			"pcieBusID": {
 				StringValue: &d.pcieBusID,
 			},
-			d.pcieRootAttr.Name: d.pcieRootAttr.Value,
 		},
 		Capacity: map[resourceapi.QualifiedName]resourceapi.DeviceCapacity{
 			"multiprocessors": {
@@ -310,5 +197,47 @@ func (d *MigDeviceInfo) GetDevice() resourceapi.Device {
 			Value: *resource.NewQuantity(1, resource.BinarySI),
 		}
 	}
+	if d.pcieRootAttr != nil {
+		device.Attributes[d.pcieRootAttr.Name] = d.pcieRootAttr.Value
+	}
 	return device
 }
+
+func (d *VfioDeviceInfo) GetDevice() resourceapi.Device {
+	device := resourceapi.Device{
+		Name: d.CanonicalName(),
+		Attributes: map[resourceapi.QualifiedName]resourceapi.DeviceAttribute{
+			"type": {
+				StringValue: ptr.To(VfioDeviceType),
+			},
+			"uuid": {
+				StringValue: &d.UUID,
+			},
+			"deviceID": {
+				StringValue: &d.deviceID,
+			},
+			"vendorID": {
+				StringValue: &d.vendorID,
+			},
+			"numa": {
+				IntValue: ptr.To(int64(d.numaNode)),
+			},
+			"pcieBusID": {
+				StringValue: &d.pcieBusID,
+			},
+			"productName": {
+				StringValue: &d.productName,
+			},
+		},
+		Capacity: map[resourceapi.QualifiedName]resourceapi.DeviceCapacity{
+			"addressableMemory": {
+				Value: *resource.NewQuantity(int64(d.addressableMemoryBytes), resource.BinarySI),
+			},
+		},
+	}
+	if d.pcieRootAttr != nil {
+		device.Attributes[d.pcieRootAttr.Name] = d.pcieRootAttr.Value
+	}
+	return device
+}
+

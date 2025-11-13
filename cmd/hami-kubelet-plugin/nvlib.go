@@ -1,3 +1,18 @@
+/*
+ * Copyright (c) 2021-2025, NVIDIA CORPORATION.  All rights reserved.
+ *
+ * Licensed under the Apache License, Version 2.0 (the "License");
+ * you may not use this file except in compliance with the License.
+ * You may obtain a copy of the License at
+ *
+ *     http://www.apache.org/licenses/LICENSE-2.0
+ *
+ * Unless required by applicable law or agreed to in writing, software
+ * distributed under the License is distributed on an "AS IS" BASIS,
+ * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+ * See the License for the specific language governing permissions and
+ * limitations under the License.
+ */
 
 package main
 
@@ -8,16 +23,22 @@ import (
 	"path/filepath"
 	"strings"
 
+	"github.com/google/uuid"
 	"k8s.io/klog/v2"
 
 	nvdev "github.com/NVIDIA/go-nvlib/pkg/nvlib/device"
+	"github.com/NVIDIA/go-nvlib/pkg/nvpci"
 	"github.com/NVIDIA/go-nvml/pkg/nvml"
 	"k8s.io/dynamic-resource-allocation/deviceattribute"
+
+	"github.com/Project-HAMi/k8s-dra-driver/pkg/featuregates"
+	// "github.com/NVIDIA/k8s-dra-driver-gpu/pkg/featuregates"
 )
 
 type deviceLib struct {
 	nvdev.Interface
 	nvmllib           nvml.Interface
+	nvpci             nvpci.Interface
 	driverLibraryPath string
 	devRoot           string
 	nvidiaSMIPath     string
@@ -39,12 +60,14 @@ func newDeviceLib(driverRoot root) (*deviceLib, error) {
 	nvmllib := nvml.New(
 		nvml.WithLibraryPath(driverLibraryPath),
 	)
+	nvpci := nvpci.New()
 	d := deviceLib{
 		Interface:         nvdev.New(nvmllib),
 		nvmllib:           nvmllib,
 		driverLibraryPath: driverLibraryPath,
 		devRoot:           driverRoot.getDevRoot(),
 		nvidiaSMIPath:     nvidiaSMIPath,
+		nvpci:             nvpci,
 	}
 	return &d, nil
 }
@@ -89,76 +112,35 @@ func (l deviceLib) alwaysShutdown() {
 func (l deviceLib) enumerateAllPossibleDevices(config *Config) (AllocatableDevices, error) {
 	alldevices := make(AllocatableDevices)
 
-	gms, err := l.enumerateGpusDevicesForHAMiCore(config)
-	if err != nil {
-		return nil, fmt.Errorf("error enumerating GPU devices for HAMi-Core: %w", err)
-	}
-	for k, v := range gms {
-		alldevices[k] = v
-	}
-
-	return alldevices, nil
-}
-
-
-// TODO: Merge this func into enumerateGpusAndMigDevices
-func (l deviceLib) enumerateGpusDevicesForHAMiCore(config *Config) (AllocatableDevices, error) {
-	if err := l.Init(); err != nil {
-		return nil, err
-	}
-	defer l.alwaysShutdown()
-
-	// splitCount := config.flags.hamiCoreDevSplitCount
-	devices := make(AllocatableDevices)
-	err := l.VisitDevices(func(i int, d nvdev.Device) error {
-		gpuInfo, err := l.getGpuInfo(i, d)
+	if featuregates.Enabled(featuregates.HAMiCoreSupport) {
+		gms, err := l.enumerateGpusDevicesForHAMiCore(config)
 		if err != nil {
-			return fmt.Errorf("error getting info for GPU %d: %w", i, err)
+			return nil, fmt.Errorf("error enumerating GPUs devices for HAMiCore", err)
 		}
+		for k, v := range gms {
+			alldevices[k] = v
+		}
+	} else {
+	  gms, err := l.enumerateGpusAndMigDevices(config)
+	  if err != nil {
+	  	return nil, fmt.Errorf("error enumerating GPUs and MIG devices: %w", err)
+	  }
+	  for k, v := range gms {
+	  	alldevices[k] = v
+	  }
 
-		// for idx := range splitCount {
-		hamiGpuInfo := &HAMiGpuInfo{
-			GpuInfo: GpuInfo{
-				UUID:                  gpuInfo.UUID,
-				minor:                 gpuInfo.minor,
-				index:                 gpuInfo.index,
-				migEnabled:            gpuInfo.migEnabled,
-				memoryBytes:           gpuInfo.memoryBytes,
-				productName:           gpuInfo.productName,
-				brand:                 gpuInfo.brand,
-				architecture:          gpuInfo.architecture,
-				cudaComputeCapability: gpuInfo.cudaComputeCapability,
-				driverVersion:         gpuInfo.driverVersion,
-				cudaDriverVersion:     gpuInfo.cudaDriverVersion,
-				pcieBusID:             gpuInfo.pcieBusID,
-				pcieRootAttr:          gpuInfo.pcieRootAttr,
-				migProfiles:           gpuInfo.migProfiles,
-			},
-			// TODO: A better mapping method should be applied
-			// hamiSplitCounter: splitCount,
-			// hamiIndex:        int(idx),
-			// hamiSMLimit:      100 / splitCount,
-			// hamiMemoryBytes:  gpuInfo.memoryBytes / uint64(splitCount),
-		}
-		deviceInfo := &AllocatableDevice{
-			HAMiGpu: hamiGpuInfo,
-		}
-		name := hamiGpuInfo.CanonicalName()
-		devices[name] = deviceInfo
-		// }
-
-		return nil
-	})
-	if err != nil {
-		return nil, fmt.Errorf("error visiting devices: %w", err)
+	  if featuregates.Enabled(featuregates.PassthroughSupport) {
+	  	passthroughDevices, err := l.enumerateGpuPciDevices(config, gms)
+	  	if err != nil {
+	  		return nil, fmt.Errorf("error enumerating GPU PCI devices: %w", err)
+	  	}
+	  	for k, v := range passthroughDevices {
+	  		alldevices[k] = v
+	  	}
+	  }
 	}
-
-	// Debug:
-	for name, _ := range devices {
-		klog.Warningf("enumerateGpusDevicesForHAMiCore -- CanonicalName: %s", name)
-	}
-
-	return devices, nil
+	
+	return alldevices, nil
 }
 
 func (l deviceLib) enumerateGpusAndMigDevices(config *Config) (AllocatableDevices, error) {
@@ -179,16 +161,16 @@ func (l deviceLib) enumerateGpusAndMigDevices(config *Config) (AllocatableDevice
 		}
 		devices[gpuInfo.CanonicalName()] = deviceInfo
 
-		migs, err := l.getMigDevices(gpuInfo)
+		migs, err := l.discoverMigDevicesByGPU(gpuInfo)
 		if err != nil {
-			return fmt.Errorf("error getting MIG devices for GPU %d: %w", i, err)
+			return fmt.Errorf("error discovering MIG devices for GPU %q: %w", gpuInfo.CanonicalName(), err)
 		}
-
+		if featuregates.Enabled(featuregates.PassthroughSupport) {
+			// If no MIG devices are found, allow VFIO devices.
+			gpuInfo.vfioEnabled = len(migs) == 0
+		}
 		for _, migDeviceInfo := range migs {
-			deviceInfo := &AllocatableDevice{
-				Mig: migDeviceInfo,
-			}
-			devices[migDeviceInfo.CanonicalName()] = deviceInfo
+			devices[migDeviceInfo.CanonicalName()] = migDeviceInfo
 		}
 
 		return nil
@@ -198,6 +180,82 @@ func (l deviceLib) enumerateGpusAndMigDevices(config *Config) (AllocatableDevice
 	}
 
 	return devices, nil
+}
+
+func (l deviceLib) discoverMigDevicesByGPU(gpuInfo *GpuInfo) (AllocatableDeviceList, error) {
+	var devices AllocatableDeviceList
+	migs, err := l.getMigDevices(gpuInfo)
+	if err != nil {
+		return nil, fmt.Errorf("error getting MIG devices for GPU %q: %w", gpuInfo.CanonicalName(), err)
+	}
+
+	for _, migDeviceInfo := range migs {
+		mig := &AllocatableDevice{
+			Mig: migDeviceInfo,
+		}
+		devices = append(devices, mig)
+	}
+	return devices, nil
+}
+
+// TODO: Need go-nvlib util for this.
+func (l deviceLib) discoverGPUByPCIBusID(pcieBusID string) (*AllocatableDevice, AllocatableDeviceList, error) {
+	if err := l.Init(); err != nil {
+		return nil, nil, err
+	}
+	defer l.alwaysShutdown()
+
+	var gpu *AllocatableDevice
+	var migs AllocatableDeviceList
+	err := l.VisitDevices(func(i int, d nvdev.Device) error {
+		gpuPCIBusID, err := d.GetPCIBusID()
+		if err != nil {
+			return fmt.Errorf("error getting PCIe bus ID for device %d: %w", i, err)
+		}
+		if gpuPCIBusID != pcieBusID {
+			return nil
+		}
+		gpuInfo, err := l.getGpuInfo(i, d)
+		if err != nil {
+			return fmt.Errorf("error getting info for GPU %d: %w", i, err)
+		}
+		migs, err = l.discoverMigDevicesByGPU(gpuInfo)
+		if err != nil {
+			return fmt.Errorf("error discovering MIG devices for GPU %q: %w", gpuInfo.CanonicalName(), err)
+		}
+		// If no MIG devices are found, allow VFIO devices.
+		gpuInfo.vfioEnabled = len(migs) == 0
+		gpu = &AllocatableDevice{
+			Gpu: gpuInfo,
+		}
+		return nil
+	})
+	if err != nil {
+		return nil, nil, fmt.Errorf("error visiting devices: %w", err)
+	}
+	return gpu, migs, nil
+}
+
+// TODO: Need go-nvlib util for this.
+func (l deviceLib) discoverVfioDevice(gpuInfo *GpuInfo) (*AllocatableDevice, error) {
+	gpus, err := l.nvpci.GetGPUs()
+	if err != nil {
+		return nil, fmt.Errorf("error getting GPU PCI devices: %w", err)
+	}
+	for idx, gpu := range gpus {
+		if gpu.Address != gpuInfo.pcieBusID {
+			continue
+		}
+		vfioDeviceInfo, err := l.getVfioDeviceInfo(idx, gpu)
+		if err != nil {
+			return nil, fmt.Errorf("error getting VFIO device info: %w", err)
+		}
+		vfioDeviceInfo.parent = gpuInfo
+		return &AllocatableDevice{
+			Vfio: vfioDeviceInfo,
+		}, nil
+	}
+	return nil, fmt.Errorf("error discovering VFIO device by PCIe bus ID: %s", gpuInfo.pcieBusID)
 }
 
 func (l deviceLib) getGpuInfo(index int, device nvdev.Device) (*GpuInfo, error) {
@@ -241,15 +299,16 @@ func (l deviceLib) getGpuInfo(index int, device nvdev.Device) (*GpuInfo, error) 
 	if ret != nvml.SUCCESS {
 		return nil, fmt.Errorf("error getting CUDA driver version: %w", err)
 	}
-
 	pcieBusID, err := device.GetPCIBusID()
 	if err != nil {
 		return nil, fmt.Errorf("error getting PCIe bus ID for device %d: %w", index, err)
 	}
 
-	pcieRootAttr, err := deviceattribute.GetPCIeRootAttributeByPCIBusID(pcieBusID)
-	if err != nil {
-		return nil, fmt.Errorf("error getting PCIe root for device %d: %w", index, err)
+	var pcieRootAttr *deviceattribute.DeviceAttribute
+	if attr, err := deviceattribute.GetPCIeRootAttributeByPCIBusID(pcieBusID); err == nil {
+		pcieRootAttr = &attr
+	} else {
+		klog.Warningf("error getting PCIe root for device %d, continuing without attribute: %v", index, err)
 	}
 
 	var migProfiles []*MigProfileInfo
@@ -308,7 +367,6 @@ func (l deviceLib) getGpuInfo(index int, device nvdev.Device) (*GpuInfo, error) 
 	gpuInfo := &GpuInfo{
 		UUID:                  uuid,
 		minor:                 minor,
-		index:                 index,
 		migEnabled:            migEnabled,
 		memoryBytes:           memory.Total,
 		productName:           productName,
@@ -323,6 +381,55 @@ func (l deviceLib) getGpuInfo(index int, device nvdev.Device) (*GpuInfo, error) 
 	}
 
 	return gpuInfo, nil
+}
+
+func (l deviceLib) enumerateGpuPciDevices(config *Config, gms AllocatableDevices) (AllocatableDevices, error) {
+	devices := make(AllocatableDevices)
+	gpuPciDevices, err := l.nvpci.GetGPUs()
+	if err != nil {
+		return nil, fmt.Errorf("error getting GPU PCI devices: %w", err)
+	}
+	for idx, pci := range gpuPciDevices {
+		parent := gms.GetGPUByPCIeBusID(pci.Address)
+		if parent == nil || !parent.Gpu.vfioEnabled {
+			continue
+		}
+		vfioDeviceInfo, err := l.getVfioDeviceInfo(idx, pci)
+		if err != nil {
+			return nil, fmt.Errorf("error getting GPU info from PCI device: %w", err)
+		}
+		vfioDeviceInfo.parent = parent.Gpu
+		devices[vfioDeviceInfo.CanonicalName()] = &AllocatableDevice{
+			Vfio: vfioDeviceInfo,
+		}
+	}
+	return devices, nil
+}
+
+func (l deviceLib) getVfioDeviceInfo(idx int, device *nvpci.NvidiaPCIDevice) (*VfioDeviceInfo, error) {
+	var pcieRootAttr *deviceattribute.DeviceAttribute
+	attr, err := deviceattribute.GetPCIeRootAttributeByPCIBusID(device.Address)
+	if err == nil {
+		pcieRootAttr = &attr
+	} else {
+		klog.Warningf("error getting PCIe root for device %s, continuing without attribute: %v", device.Address, err)
+	}
+
+	_, memoryBytes := device.Resources.GetTotalAddressableMemory(true)
+
+	vfioDeviceInfo := &VfioDeviceInfo{
+		UUID:                   uuid.NewSHA1(uuid.NameSpaceDNS, []byte(device.Address)).String(),
+		index:                  idx,
+		productName:            device.DeviceName,
+		pcieBusID:              device.Address,
+		pcieRootAttr:           pcieRootAttr,
+		deviceID:               fmt.Sprintf("0x%04x", device.Device),
+		vendorID:               fmt.Sprintf("0x%04x", device.Vendor),
+		numaNode:               device.NumaNode,
+		iommuGroup:             device.IommuGroup,
+		addressableMemoryBytes: memoryBytes,
+	}
+	return vfioDeviceInfo, nil
 }
 
 func (l deviceLib) getMigDevices(gpuInfo *GpuInfo) (map[string]*MigDeviceInfo, error) {
@@ -404,7 +511,6 @@ func (l deviceLib) getMigDevices(gpuInfo *GpuInfo) (map[string]*MigDeviceInfo, e
 
 		migInfos[uuid] = &MigDeviceInfo{
 			UUID:          uuid,
-			index:         i,
 			profile:       migProfile.String(),
 			parent:        gpuInfo,
 			placement:     &placement,
@@ -491,3 +597,115 @@ func (l deviceLib) setComputeMode(uuids []string, mode string) error {
 	}
 	return nil
 }
+
+// TODO: Reenable dynamic MIG functionality once it is supported in Kubernetes 1.32
+//
+// func (l deviceLib) createMigDevice(gpu *GpuInfo, profile nvdev.MigProfile, placement *nvml.GpuInstancePlacement) (*MigDeviceInfo, error) {
+// 	if err := l.Init(); err != nil {
+// 		return nil, err
+// 	}
+// 	defer l.alwaysShutdown()
+//
+// 	profileInfo := profile.GetInfo()
+//
+// 	device, ret := l.nvmllib.DeviceGetHandleByUUID(gpu.UUID)
+// 	if ret != nvml.SUCCESS {
+// 		return nil, fmt.Errorf("error getting GPU device handle: %v", ret)
+// 	}
+//
+// 	giProfileInfo, ret := device.GetGpuInstanceProfileInfo(profileInfo.GIProfileID)
+// 	if ret != nvml.SUCCESS {
+// 		return nil, fmt.Errorf("error getting GPU instance profile info for '%v': %v", profile, ret)
+// 	}
+//
+// 	gi, ret := device.CreateGpuInstanceWithPlacement(&giProfileInfo, placement)
+// 	if ret != nvml.SUCCESS {
+// 		return nil, fmt.Errorf("error creating GPU instance for '%v': %v", profile, ret)
+// 	}
+//
+// 	giInfo, ret := gi.GetInfo()
+// 	if ret != nvml.SUCCESS {
+// 		return nil, fmt.Errorf("error getting GPU instance info for '%v': %v", profile, ret)
+// 	}
+//
+// 	ciProfileInfo, ret := gi.GetComputeInstanceProfileInfo(profileInfo.CIProfileID, profileInfo.CIEngProfileID)
+// 	if ret != nvml.SUCCESS {
+// 		return nil, fmt.Errorf("error getting Compute instance profile info for '%v': %v", profile, ret)
+// 	}
+//
+// 	ci, ret := gi.CreateComputeInstance(&ciProfileInfo)
+// 	if ret != nvml.SUCCESS {
+// 		return nil, fmt.Errorf("error creating Compute instance for '%v': %v", profile, ret)
+// 	}
+//
+// 	ciInfo, ret := ci.GetInfo()
+// 	if ret != nvml.SUCCESS {
+// 		return nil, fmt.Errorf("error getting GPU instance info for '%v': %v", profile, ret)
+// 	}
+//
+// 	uuid := ""
+// 	err := walkMigDevices(device, func(i int, migDevice nvml.Device) error {
+// 		giID, ret := migDevice.GetGpuInstanceId()
+// 		if ret != nvml.SUCCESS {
+// 			return fmt.Errorf("error getting GPU instance ID for MIG device: %v", ret)
+// 		}
+// 		ciID, ret := migDevice.GetComputeInstanceId()
+// 		if ret != nvml.SUCCESS {
+// 			return fmt.Errorf("error getting Compute instance ID for MIG device: %v", ret)
+// 		}
+// 		if giID != int(giInfo.Id) || ciID != int(ciInfo.Id) {
+// 			return nil
+// 		}
+// 		uuid, ret = migDevice.GetUUID()
+// 		if ret != nvml.SUCCESS {
+// 			return fmt.Errorf("error getting UUID for MIG device: %v", ret)
+// 		}
+// 		return nil
+// 	})
+// 	if err != nil {
+// 		return nil, fmt.Errorf("error processing MIG device for GI and CI just created: %w", err)
+// 	}
+// 	if uuid == "" {
+// 		return nil, fmt.Errorf("unable to find MIG device for GI and CI just created")
+// 	}
+//
+// 	migInfo := &MigDeviceInfo{
+// 		UUID:    uuid,
+// 		parent:  gpu,
+// 		profile: profile,
+// 		giInfo:  &giInfo,
+// 		ciInfo:  &ciInfo,
+// 	}
+//
+// 	return migInfo, nil
+// }
+//
+// func (l deviceLib) deleteMigDevice(mig *MigDeviceInfo) error {
+// 	if err := l.Init(); err != nil {
+// 		return err
+// 	}
+// 	defer l.alwaysShutdown()
+//
+// 	parent, ret := l.nvmllib.DeviceGetHandleByUUID(mig.parent.UUID)
+// 	if ret != nvml.SUCCESS {
+// 		return fmt.Errorf("error getting device from UUID '%v': %v", mig.parent.UUID, ret)
+// 	}
+// 	gi, ret := parent.GetGpuInstanceById(int(mig.giInfo.Id))
+// 	if ret != nvml.SUCCESS {
+// 		return fmt.Errorf("error getting GPU instance ID for MIG device: %v", ret)
+// 	}
+// 	ci, ret := gi.GetComputeInstanceById(int(mig.ciInfo.Id))
+// 	if ret != nvml.SUCCESS {
+// 		return fmt.Errorf("error getting Compute instance ID for MIG device: %v", ret)
+// 	}
+// 	ret = ci.Destroy()
+// 	if ret != nvml.SUCCESS {
+// 		return fmt.Errorf("error destroying Compute Instance: %v", ret)
+// 	}
+// 	ret = gi.Destroy()
+// 	if ret != nvml.SUCCESS {
+// 		return fmt.Errorf("error destroying GPU Instance: %v", ret)
+// 	}
+// 	return nil
+// }
+
