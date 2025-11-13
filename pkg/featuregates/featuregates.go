@@ -55,7 +55,7 @@ var FeatureGates featuregate.MutableVersionedFeatureGate
 var defaultFeatureGates = map[featuregate.Feature]featuregate.VersionedSpecs{
 	HAMiCoreSupport: {
 		{
-			Default:    false,
+			Default:    true,
 			PreRelease: featuregate.Alpha,
 			Version:    version.MajorMinor(25, 8),
 		},
@@ -97,7 +97,7 @@ func init() {
 
 // parseProjectVersion parses the project version string and returns major.minor version.
 func parseProjectVersion() *version.Version {
-	versionStr := info.Version()
+	versionStr := info.NVVesion()
 	v := version.MustParse(strings.TrimPrefix(versionStr, "v"))
 	return version.MajorMinor(v.Major(), v.Minor())
 }
