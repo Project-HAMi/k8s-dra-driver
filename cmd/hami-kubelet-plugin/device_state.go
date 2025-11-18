@@ -361,7 +361,7 @@ func (s *DeviceState) prepareDevices(ctx context.Context, claim *resourceapi.Res
 				break
 			}
 			if len(c.Requests) == 0 {
-				if _, ok := c.Config.(*configapi.GpuConfig); ok && device.Type() != GpuDeviceType {
+				if _, ok := c.Config.(*configapi.GpuConfig); ok && device.Type() != GpuDeviceType && device.Type() != HAMiGpuDeviceType {
 					continue
 				}
 				if _, ok := c.Config.(*configapi.MigDeviceConfig); ok && device.Type() != MigDeviceType {

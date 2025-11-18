@@ -16,6 +16,25 @@ spec:
         app.kubernetes.io/name: hami-dra-driver
         hami-dra-driver-component: kubelet-plugin
     spec:
+      initContainers:
+      - name: init-container
+        image: projecthami/k8s-dra-driver:v0.0.1-dev
+        securityContext:
+          privileged: true
+        command: [bash, /usr/bin/kubelet-plugin-prestart.sh]
+        env:
+        - name: NVIDIA_DRIVER_ROOT
+          value: /
+        - name: NVIDIA_VISIBLE_DEVICES
+          value: void
+        - name: KUBELET_REGISTRAR_DIRECTORY_PATH
+          value: /var/lib/kubelet/plugins_registry
+        - name: KUBELET_PLUGINS_DIRECTORY_PATH
+          value: /var/lib/kubelet/plugins
+        volumeMounts:
+        - name: driver-root-parent
+          mountPath: /driver-root-parent
+          readOnly: true
       containers:
       - args:
         - |-
@@ -34,6 +53,7 @@ spec:
         - -c
         env:
         - name: MASK_NVIDIA_DRIVER_PARAMS
+          value: ""
         - name: NVIDIA_DRIVER_ROOT
           value: /
         - name: NVIDIA_VISIBLE_DEVICES

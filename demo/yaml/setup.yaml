@@ -79,7 +79,7 @@ spec:
       requests:
       - name: single-gpu
         exactly:
-          deviceClassName: hami-core.project-hami.io
+          deviceClassName: hami-core-gpu.project-hami.io
           selectors:
             - cel:
                 expression: |-
