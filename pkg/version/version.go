@@ -18,8 +18,13 @@ package version
 
 var (
 	version string
+	nvversion string
 )
 
 func Version() string {
 	return version
+}
+
+func NVVesion() string {
+	return nvversion
 }
