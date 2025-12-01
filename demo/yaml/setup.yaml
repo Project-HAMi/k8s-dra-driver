@@ -7,7 +7,7 @@ spec:
   selectors:
   - cel:
       expression: |-
-        device.driver == "hami-core-gpu.project-hami.io"
+        device.driver == "hami-core-gpu.project-hami.io" && device.attributes["hami-core-gpu.project-hami.io"].type == "hami-gpu"
 ---
 apiVersion: v1
 kind: Namespace
@@ -26,10 +26,6 @@ spec:
     - name: single-gpu
       exactly:
         deviceClassName: hami-core-gpu.project-hami.io
-        selectors:
-          - cel:
-              expression: |-
-                device.attributes["hami-core-gpu.project-hami.io"].type == "hami-gpu"
         capacity:
           requests:
             cores: 30
@@ -47,10 +43,6 @@ spec:
     - name: double-gpu-0-0
       exactly:
         deviceClassName: hami-core-gpu.project-hami.io
-        selectors:
-          - cel:
-              expression: |-
-                device.attributes["hami-core-gpu.project-hami.io"].type == "hami-gpu"
         capacity:
           requests:
             cores: 30
@@ -58,10 +50,6 @@ spec:
     - name: double-gpu-0-1
       exactly:
         deviceClassName: hami-core-gpu.project-hami.io
-        selectors:
-          - cel:
-              expression: |-
-                device.attributes["hami-core-gpu.project-hami.io"].type == "hami-gpu"
         capacity:
           requests:
             cores: 60
@@ -80,10 +68,6 @@ spec:
       - name: single-gpu
         exactly:
           deviceClassName: hami-core-gpu.project-hami.io
-          selectors:
-            - cel:
-                expression: |-
-                  device.attributes["hami-core-gpu.project-hami.io"].type == "hami-gpu"
           capacity:
             requests:
               cores: 30
