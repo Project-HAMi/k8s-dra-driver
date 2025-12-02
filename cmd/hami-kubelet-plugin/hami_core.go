@@ -104,7 +104,7 @@ func (d *HAMiGpuInfo) GetDevice() resourceapi.Device {
 			"memory": {
 				Value: *resource.NewQuantity(int64(d.memoryBytes), resource.BinarySI),
 				RequestPolicy: &resourceapi.CapacityRequestPolicy{
-					Default: resource.NewQuantity(int64(1048576), resource.BinarySI),
+					Default: resource.NewQuantity(int64(d.memoryBytes), resource.BinarySI),
 					ValidRange: &resourceapi.CapacityRequestPolicyRange{
 						Min: resource.NewQuantity(int64(1048576), resource.BinarySI),
 						Max: resource.NewQuantity(int64(d.memoryBytes), resource.BinarySI),
