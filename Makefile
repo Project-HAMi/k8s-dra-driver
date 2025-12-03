@@ -55,12 +55,31 @@ cmds: $(CMD_TARGETS)
 # TODO: Get the version from version.mk
 $(CMD_TARGETS): cmd-%:
 	CGO_LDFLAGS_ALLOW='-Wl,--unresolved-symbols=ignore-in-object-files' \
-		CC=$(CC) CGO_ENABLED=1 GOOS=$(GOOS) GOARCH=$(GOARCH) \
-		go build -ldflags "-s -w -X github.com/NVIDIA/k8s-dra-driver-gpu/internal/info.version=${vNVVERSION} -X github.com/Project-HAMi/k8s-dra-driver/pkg/version.nvversion=${NVVERSION} -X github.com/Project-HAMi/k8s-dra-driver/pkg/version.version=${VERSION}" \
-		$(COMMAND_BUILD_OPTIONS) $(MODULE)/cmd/$(*)
+	CC=$(CC) CGO_ENABLED=1 GOOS=$(GOOS) GOARCH=$(GOARCH) \
+	go build -ldflags "-s -w \
+		-X github.com/NVIDIA/k8s-dra-driver-gpu/internal/info.version=${vNVVERSION} \
+		-X github.com/Project-HAMi/k8s-dra-driver/pkg/version.nvversion=${NVVERSION} \
+		-X github.com/Project-HAMi/k8s-dra-driver/pkg/version.version=${VERSION}" \
+	$(COMMAND_BUILD_OPTIONS) $(MODULE)/cmd/$(*)
 
 build:
-	CC=$(CC) GOOS=$(GOOS) GOARCH=$(GOARCH) go build ./...
+	CC=$(CC) GOOS=$(GOOS) GOARCH=$(GOARCH) go build -ldflags "-s -w \
+		-X github.com/NVIDIA/k8s-dra-driver-gpu/internal/info.version=${vNVVERSION} \
+		-X github.com/Project-HAMi/k8s-dra-driver/pkg/version.nvversion=${NVVERSION} \
+		-X github.com/Project-HAMi/k8s-dra-driver/pkg/version.version=${VERSION}" \
+	./...
+
+test:
+	CC=$(CC) GOOS=$(GOOS) GOARCH=$(GOARCH) go test -ldflags "-s -w \
+		-X github.com/NVIDIA/k8s-dra-driver-gpu/internal/info.version=${vNVVERSION} \
+		-X github.com/Project-HAMi/k8s-dra-driver/pkg/version.nvversion=${NVVERSION} \
+		-X github.com/Project-HAMi/k8s-dra-driver/pkg/version.version=${VERSION}" \
+	./...
+
+check: golangci-lint
+
+golangci-lint:
+	golangci-lint run ./...
 
 # Generate an image for containerized builds
 # Note: This image is local only
