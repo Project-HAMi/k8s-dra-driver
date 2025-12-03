@@ -166,8 +166,8 @@ func (l deviceLib) enumerateGpusDevicesForHAMiCore(config *Config) (AllocatableD
 	}
 
 	// Debug:
-	for name, _ := range devices {
-		klog.Warningf("enumerateGpusDevicesForHAMiCore -- CanonicalName: %s", name)
+	for name := range devices {
+		klog.Infof("enumerateGpusDevicesForHAMiCore -- CanonicalName: %s", name)
 	}
 
 	return devices, nil
@@ -230,9 +230,19 @@ func (m *HAMiCoreManager) getConsumableCapacityMap(claim *resourceapi.ResourceCl
 func (m *HAMiCoreManager) GetCDIContainerEdits(claim *resourceapi.ResourceClaim, devs AllocatableDevices) *cdiapi.ContainerEdits {
 	cacheFileHostDirectory := fmt.Sprintf("%s/vgpu/claims/%s", m.hostHookPath, claim.UID)
 	// TODO: We should check the status of claim, becasue there may be two pod share the claim
-	os.RemoveAll(cacheFileHostDirectory)
-	os.MkdirAll(cacheFileHostDirectory, 0777)
-	os.Chmod(cacheFileHostDirectory, 0777)
+	var err error
+	err = os.RemoveAll(cacheFileHostDirectory)
+	if err != nil {
+		klog.Warningf("Failed to remove host directory for cachefile %s: %s", cacheFileHostDirectory, err)
+	}
+	err = os.MkdirAll(cacheFileHostDirectory, 0777)
+	if err != nil {
+		klog.Warningf("Failed to create host directory for cachefile %s: %s", cacheFileHostDirectory, err)
+	}
+	err = os.Chmod(cacheFileHostDirectory, 0777)
+	if err != nil {
+		klog.Warningf("Failed to change mod of host directory for cachefile %s: %s", cacheFileHostDirectory, err)
+	}
 
 	hamiEnvs := []string{}
 	// TOOD: Get SM Limit from Claim's Annotation
@@ -301,7 +311,7 @@ func (m *HAMiCoreManager) GetCDIContainerEdits(claim *resourceapi.ResourceClaim,
 
 func (m *HAMiCoreManager) Cleanup(claimUID string, pl PreparedDeviceList) error {
 	path := fmt.Sprintf("%s/vgpu/claims/%s", m.hostHookPath, claimUID)
-	os.RemoveAll(path)
+	_ = os.RemoveAll(path)
 	return nil
 }
 
