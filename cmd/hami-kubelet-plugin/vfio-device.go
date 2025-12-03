@@ -95,7 +95,8 @@ func (vm *VfioPciManager) isIommuEnabled() (bool, error) {
 	if err != nil {
 		return false, err
 	}
-	defer f.Close()
+	// defer f.Close()
+	defer func() { _ = f.Close() }()
 	_, err = f.Readdirnames(1)
 	if err == io.EOF {
 		return false, nil

@@ -115,7 +115,7 @@ func (l deviceLib) enumerateAllPossibleDevices(config *Config) (AllocatableDevic
 	if featuregates.Enabled(featuregates.HAMiCoreSupport) {
 		gms, err := l.enumerateGpusDevicesForHAMiCore(config)
 		if err != nil {
-			return nil, fmt.Errorf("error enumerating GPUs devices for HAMiCore", err)
+			return nil, fmt.Errorf("error enumerating GPUs devices for HAMiCore: %w", err)
 		}
 		for k, v := range gms {
 			alldevices[k] = v
