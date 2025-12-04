@@ -1,0 +1,106 @@
+# chart/values.yaml
+
+# Path to the NVIDIA driver root on the host.
+# Use "/" for drivers installed directly on the host.
+# Use "/run/nvidia/driver" when using the NVIDIA GPU Driver Container.
+nvidiaDriverRoot: /
+
+# Optional path to the nvidia-cdi-hook executable on the host.
+# Leave empty to use the binary bundled in the container image.
+nvidiaCDIHookPath: ""
+
+# When true, masks /proc/driver/nvidia/params to prevent the container
+# from recreating GPU device nodes (useful under nvkind).
+maskNvidiaDriverParams: false
+
+nameOverride: ""
+fullnameOverride: ""
+namespaceOverride: ""
+
+# Deprecated: setting 'namespace' directly is no longer supported.
+# Use --namespace (with --create-namespace) on the helm install/upgrade command.
+# This key is intentionally left empty; setting it to any non-empty value will
+# cause chart rendering to fail with an explicit error.
+namespace: ""
+
+# Set to true to allow deployment into the 'default' namespace.
+allowDefaultNamespace: false
+
+# Explicitly set the resource.k8s.io API version used for DeviceClass objects.
+# Leave empty for auto-detection (v1 > v1beta2 > v1beta1).
+resourceApiVersion: ""
+
+# When true, render DeviceClass objects for gpu.nvidia.com, mig.nvidia.com,
+# and vfio.gpu.nvidia.com.
+gpuResourcesEnabled: true
+
+# When true, render DeviceClass objects for gpu.nvidia.com, mig.nvidia.com,
+# and vfio.gpu.nvidia.com and allow this DRA driver to serve extended resource
+# requests (nvidia.com/gpu). Requires the standard GPU device plugin to be
+# disabled on the same node.
+resources:
+  gpus:
+    enabled: true
+
+# Set to true to suppress the safety guard that blocks 'resources.gpus.enabled'
+# from taking effect. Only set this after confirming the standard GPU device
+# plugin is not running on the target nodes.
+gpuResourcesEnabledOverride: true
+
+imagePullSecrets: []
+image:
+  repository: projecthami/k8s-dra-driver
+  pullPolicy: IfNotPresent
+  # Overrides the image tag. Default is "v" + .Chart.AppVersion.
+  tag: ""
+
+serviceAccount:
+  create: true
+  annotations: {}
+  # If not set and create is true, defaults to <fullname>-service-account.
+  name: ""
+
+# HAMi-specific host paths
+driver:
+  cdiRoot: /var/run/cdi
+  vgpuInitPath: /usr/local/vgpu
+  hostTmp: /tmp
+
+# Feature gates forwarded to the hami-kubelet-plugin binary as the
+# FEATURE_GATES environment variable.
+# Example:
+#   featureGates:
+#     HAMiCoreSupport: true
+#     DynamicMIG: false
+featureGates: {}
+
+# klog verbosity level passed to hami-kubelet-plugin via -v flag.
+# 0 = errors/warnings/info only; higher numbers increase verbosity.
+logVerbosity: "4"
+
+kubeletPlugin:
+  priorityClassName: "system-node-critical"
+  updateStrategy:
+    type: RollingUpdate
+    rollingUpdate:
+      maxUnavailable: "100%"
+  podAnnotations: {}
+  podSecurityContext: {}
+  nodeSelector: {}
+  tolerations: []
+  affinity: {}
+  kubeletRegistrarDirectoryPath: /var/lib/kubelet/plugins_registry
+  kubeletPluginsDirectoryPath: /var/lib/kubelet/plugins
+  containers:
+    init:
+      securityContext:
+        privileged: true
+      resources: {}
+    gpus:
+      env: []
+      securityContext:
+        privileged: true
+      resources: {}
+      # Port for a gRPC health service checked by startupProbe + livenessProbe.
+      # Set to a positive value to enable probes. Set to a negative value to disable.
+      healthcheckPort: 51516
