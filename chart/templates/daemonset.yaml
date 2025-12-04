@@ -1,0 +1,163 @@
+apiVersion: apps/v1
+kind: DaemonSet
+metadata:
+  name: {{ include "hami-dra-driver.fullname" . }}
+  namespace: {{ .Release.Namespace }}
+  labels:
+    {{- include "hami-dra-driver.labels" . | nindent 4 }}
+spec:
+  revisionHistoryLimit: 10
+  selector:
+    matchLabels:
+      {{- include "hami-dra-driver.selectorLabels" . | nindent 6 }}
+  template:
+    metadata:
+      {{- with .Values.podAnnotations }}
+      annotations:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+      labels:
+        {{- include "hami-dra-driver.selectorLabels" . | nindent 8 }}
+        hami-dra-driver-component: kubelet-plugin
+    spec:
+      {{- with .Values.imagePullSecrets }}
+      imagePullSecrets:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+      serviceAccountName: {{ include "hami-dra-driver.serviceAccountName" . }}
+      initContainers:
+      - name: init-container
+        image: "{{ .Values.image.repository }}:{{ include "hami-dra-driver.imageTag" . }}"
+        imagePullPolicy: {{ .Values.image.pullPolicy }}
+        securityContext:
+          {{- toYaml .Values.securityContext | nindent 10 }}
+        command: [bash, /usr/bin/kubelet-plugin-prestart.sh]
+        env:
+        - name: NVIDIA_DRIVER_ROOT
+          value: {{ .Values.driver.root }}
+        - name: NVIDIA_VISIBLE_DEVICES
+          value: void
+        - name: KUBELET_REGISTRAR_DIRECTORY_PATH
+          value: {{ .Values.kubelet.pluginsRegistryPath }}
+        - name: KUBELET_PLUGINS_DIRECTORY_PATH
+          value: {{ .Values.kubelet.pluginsPath }}
+        volumeMounts:
+        - name: driver-root-parent
+          mountPath: /driver-root-parent
+          readOnly: true
+      containers:
+      - name: {{ include "hami-dra-driver.fullname" . }}
+        securityContext:
+          {{- toYaml .Values.securityContext | nindent 10 }}
+        image: "{{ .Values.image.repository }}:{{ include "hami-dra-driver.imageTag" . }}"
+        imagePullPolicy: {{ .Values.image.pullPolicy }}
+        command:
+        - bash
+        - -c
+        args:
+        - |-
+          # Conditionally mask the params file to prevent this container from
+          # recreating any missing GPU device nodes. This is necessary, for
+          # example, when running under nvkind to limit the set GPUs governed
+          # by the plugin even though it has cgroup access to all of them.
+          if [ "${MASK_NVIDIA_DRIVER_PARAMS}" = "true" ]; then
+            cp /proc/driver/nvidia/params root/gpu-params
+            sed -i 's/^ModifyDeviceFiles: 1$/ModifyDeviceFiles: 0/' root/gpu-params
+            mount --bind root/gpu-params /proc/driver/nvidia/params
+          fi
+          hami-kubelet-plugin -v 6
+        env:
+        - name: MASK_NVIDIA_DRIVER_PARAMS
+          value: {{ .Values.env.MASK_NVIDIA_DRIVER_PARAMS | quote }}
+        - name: NVIDIA_DRIVER_ROOT
+          value: {{ .Values.driver.root }}
+        - name: NVIDIA_VISIBLE_DEVICES
+          value: void
+        - name: CDI_ROOT
+          value: {{ .Values.driver.cdiRoot }}
+        - name: NVIDIA_MIG_CONFIG_DEVICES
+          value: {{ .Values.env.NVIDIA_MIG_CONFIG_DEVICES }}
+        - name: NODE_NAME
+          valueFrom:
+            fieldRef:
+              apiVersion: v1
+              fieldPath: spec.nodeName
+        - name: NAMESPACE
+          valueFrom:
+            fieldRef:
+              apiVersion: v1
+              fieldPath: metadata.namespace
+        - name: KUBELET_REGISTRAR_DIRECTORY_PATH
+          value: {{ .Values.kubelet.pluginsRegistryPath }}
+        - name: KUBELET_PLUGINS_DIRECTORY_PATH
+          value: {{ .Values.kubelet.pluginsPath }}
+        - name: IMAGE_NAME
+          value: "{{ .Values.image.repository }}:{{ include "hami-dra-driver.imageTag" . }}"
+        lifecycle:
+          postStart:
+            exec:
+              command: ["/bin/bash", "-c", "/usr/bin/vgpu-init.sh {{ .Values.driver.vgpuInitPath }}"]
+        resources:
+          {{- toYaml .Values.resources | nindent 10 }}
+        volumeMounts:
+        - mountPath: {{ .Values.kubelet.pluginsRegistryPath }}
+          name: plugins-registry
+        - mountPath: {{ .Values.kubelet.pluginsPath }}
+          mountPropagation: Bidirectional
+          name: plugins
+        - mountPath: {{ .Values.driver.cdiRoot }}
+          name: cdi
+        - mountPath: /driver-root
+          mountPropagation: HostToContainer
+          name: driver-root
+          readOnly: true
+        - mountPath: {{ .Values.driver.vgpuInitPath }}
+          name: host-vgpu
+        - mountPath: {{ .Values.driver.hostTmp }}
+          name: host-tmp
+      volumes:
+      - name: plugins-registry
+        hostPath:
+          path: {{ .Values.kubelet.pluginsRegistryPath }}
+          type: ""
+      - name: plugins
+        hostPath:
+          path: {{ .Values.kubelet.pluginsPath }}
+          type: ""
+      - name: cdi
+        hostPath:
+          path: {{ .Values.driver.cdiRoot }}
+          type: ""
+      - name: driver-root-parent
+        hostPath:
+          path: /
+          type: DirectoryOrCreate
+      - name: driver-root
+        hostPath:
+          path: /
+          type: DirectoryOrCreate
+      - name: host-dev
+        hostPath:
+          path: /dev
+          type: ""
+      - name: host-vgpu
+        hostPath:
+          path: {{ .Values.driver.vgpuInitPath }}
+          type: DirectoryOrCreate
+      - name: host-tmp
+        hostPath:
+          path: {{ .Values.driver.hostTmp }}
+          type: ""
+      dnsPolicy: ClusterFirst
+      {{- with .Values.nodeSelector }}
+      nodeSelector:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+      {{- with .Values.affinity }}
+      affinity:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+      {{- with .Values.tolerations }}
+      tolerations:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}

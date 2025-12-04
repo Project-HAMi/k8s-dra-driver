@@ -1,0 +1,21 @@
+apiVersion: rbac.authorization.k8s.io/v1
+kind: Role
+metadata:
+  name: {{ include "hami-dra-driver.fullname" . }}-role
+  namespace: {{ .Release.Namespace }}
+  labels:
+    {{- include "hami-dra-driver.labels" . | nindent 4 }}
+rules:
+- apiGroups:
+  - apps
+  resources:
+  - daemonsets
+  - deployments
+  verbs:
+  - get
+  - list
+  - watch
+  - create
+  - update
+  - patch
+  - delete
