@@ -7,7 +7,7 @@ Running this demo requires the following software:
 * Docker & NVIDIA Container Toolkit & Runtime
 * kind (follow the official [installation docs](https://kind.sigs.k8s.io/docs/user/quick-start/#installation))
 
-## Building Image
+## Build Image
 
 ```Bash
 git clone https://github.com/Project-HAMi/k8s-dra-driver.git
@@ -16,6 +16,24 @@ make image
 ```
 
 After building, you can find the projecthami/k8s-dra-driver:v0.0.1-dev image with `docker image ls` command.
+
+## Configure container runtime
+
+Configure the NVIDIA Container Runtime as the default runtime:
+```Bash
+sudo nvidia-ctk runtime configure --runtime={docker|containerd|other runtime} --set-as-default
+```
+
+Restart the container service to apply the changes
+```Bash
+# Take docekr as an example
+sudo systemctl restart docker 
+```
+
+Set the accept-nvidia-visible-devices-as-volume-mounts option to true in the /etc/nvidia-container-runtime/config.toml file to configure the NVIDIA Container Runtime to use volume mounts to select devices to inject into a container.
+```Bash
+sudo nvidia-ctk config --in-place --set accept-nvidia-visible-devices-as-volume-mounts=true
+```
 
 ## Create cluster with kind
 
@@ -28,10 +46,10 @@ Finally, Please make sure that the `featureGates.DRAConsumableCapacity` in the [
 ```Bash
 ./demo/clusters/kind/create-cluster.sh
 ```
-A
+
 After create the cluster, `projecthami/k8s-dra-driver:v0.0.1-dev` image will be loaded into nodes automatically.
 
-## Installing HAMi DRA Driver
+## Install HAMi DRA Driver
 
 ```Bash
 cd demo/yaml
@@ -39,7 +57,7 @@ kubectl apply -f rbac.yaml
 kubectl apply -f ds.yaml
 ```
 
-## Experiencing HAMi-Core DRA
+## Experience HAMi-Core DRA
 
 Images should be loaded into cluster before creating the pod first.
 
@@ -61,5 +79,3 @@ Please check the files in demo/yaml for configure DRA with ResourceClaimTemplate
 ```Bash
 ./demo/clusters/kind/delete-cluster.sh
 ```
-
-
