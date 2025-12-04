@@ -14,6 +14,7 @@ The list of prerequisites for running the DRA Driver for HAMi-Core is described 
 - NVIDIA drivers >= 440
 - nvidia-docker version > 2.0
 - default runtime configured as nvidia for containerd/docker/cri-o container runtime
+  - `accept-nvidia-visible-devices-as-volume-mounts` option should be set to `true` for NVIDIA Container Runtime
 - Kubernetes version >= 1.34 with DRA Consumable Capacity feature enabled
 - glibc >= 2.17 & glibc < 2.30
 - kernel version >= 3.10
