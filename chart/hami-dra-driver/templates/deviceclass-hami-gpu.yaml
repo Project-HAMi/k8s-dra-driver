@@ -1,0 +1,17 @@
+{{- if .Values.gpuResourcesEnabled }}
+{{- $resourceApiVersion := (include "hami-dra-driver.resourceApiVersion" . | trim) }}
+---
+apiVersion: {{ $resourceApiVersion }}
+kind: DeviceClass
+metadata:
+  name: hami-core-gpu.projet-hami.io
+  labels:
+    {{- include "hami-dra-driver.labels" . | nindent 4 }}
+spec:
+  selectors:
+  - cel:
+      expression: "device.driver == 'hami-core-gpu.project-hami.io' && device.attributes['hami-core-gpu.project-hami.io'].type == 'hami-gpu')"
+  {{- if eq $resourceApiVersion "resource.k8s.io/v1" }}
+  extendedResourceName: nvidia.com/gpu
+  {{- end }}
+{{- end }}

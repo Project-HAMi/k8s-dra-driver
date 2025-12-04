@@ -1,0 +1,8 @@
+# chart/Chart.yaml
+apiVersion: v2
+name: hami-dra-driver
+description: Helm chart of the HAMi DRA Driver for NVIDIA GPUs
+type: application
+version: "0.1.0"
+appVersion: "v0.1.0"
+kubeVersion: ">=1.34.0-0"

@@ -1,0 +1,50 @@
+{{- if .Values.namespace }}
+{{- $error := "" }}
+{{- $error = printf "%s\nValue 'namespace' set to %s" $error .Values.namespace }}
+{{- $error = printf "%s\nSetting an explicit 'namespace' in values.yaml or via --set on the command line is no longer supported." $error }}
+{{- $error = printf "%s\nUse --namespace (with --create-namespace as necessary) instead." $error }}
+{{- $error = printf "%s\nSee: https://helm.sh/docs/helm/helm_install/#options" $error }}
+{{- fail $error }}
+{{- end }}
+
+{{/*
+  Guard: prevent accidental deployment to the default namespace.
+*/}}
+{{- if and (eq (include "hami-dra-driver.namespace" .) "default") (not .Values.allowDefaultNamespace) }}
+{{- $error := "" }}
+{{- $error = printf "%s\nRunning in the 'default' namespace is not recommended." $error }}
+{{- $error = printf "%s\nSet 'allowDefaultNamespace=true' to bypass this error." $error }}
+{{- $error = printf "%s\nOtherwise, use --namespace (with --create-namespace as necessary) to run in a specific namespace." $error }}
+{{- $error = printf "%s\nSee: https://helm.sh/docs/helm/helm_install/#options" $error }}
+{{- fail $error }}
+{{- end }}
+
+{{- if and .Values.resources.gpus.enabled (not .Values.gpuResourcesEnabledOverride) }}
+{{- $error := "" }}
+{{- $error = printf "%s\n\nThe default value of 'resources.gpus.enabled == true'. However, when 'resources.gpus.enabled=true' this DRA driver cannot be deployed alongside the standard GPU device plugin on the same node. To avoid potential collisions between these two components, we will not allow this default to take effect until KEP 5004 has reached GA in upstream Kubernetes." $error }}
+{{- $error = printf "%s\n" $error }}
+{{- $error = printf "%s\nIf you are sure you have disabled the deployment of the standard GPU device plugin and want to remove this error and force 'resources.gpus.enabled=true', you must also:" $error }}
+{{- $error = printf "%s\n" $error }}
+{{- $error = printf "%s\n    --set 'gpuResourcesEnabledOverride=true'" $error }}
+{{- $error = printf "%s\n" $error }}
+{{- $error = printf "%s\nOnce KEP 5004 has reached GA, this DRA driver will be able to honour extended resource requests for 'nvidia.com/gpu' alongside requests made using ResourceClaims, essentially obsoleting the need for the standard GPU device plugin altogether. If you want to try this feature now, you can enable it in upstream Kubernetes v1.35+ by setting the 'DRAExtendedResource' feature gate on the 'kube-apiserver', 'kube-scheduler', 'kube-controller-manager', and 'kubelet'." $error }}
+{{- fail $error }}
+{{- end }}
+
+{{/*
+  Guard: deprecated nvidiaCtkPath field.
+*/}}
+{{- if .Values.nvidiaCtkPath }}
+{{- $error := "" }}
+{{- $error = printf "%s\nSetting 'nvidiaCtkPath' is no longer supported and can be removed." $error }}
+{{- $error = printf "%s\nThe driver now uses 'nvidia-cdi-hook' (bundled in the image) instead of 'nvidia-ctk'." $error }}
+{{- fail $error }}
+{{- end }}
+
+{{- if not (include "hami-dra-driver.resourceApiVersion" .) -}}
+{{- $error := "" }}
+{{- $error = printf "%s\nNo supported resource.k8s.io API version found in the cluster." $error }}
+{{- $error = printf "%s\nThis chart requires one of: resource.k8s.io/v1, resource.k8s.io/v1beta1, or resource.k8s.io/v1beta2." $error }}
+{{- $error = printf "%s\nPlease ensure your cluster supports Dynamic Resource Allocation (DRA) with one of these API versions." $error }}
+{{- fail $error }}
+{{- end }}
