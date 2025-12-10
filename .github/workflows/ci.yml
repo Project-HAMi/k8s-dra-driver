@@ -5,6 +5,12 @@ on:
     branches: [ main ]
   pull_request:
     branches: [ main ]
+  paths-ignore:
+    - 'README.md'
+    - 'demo/**'
+    - 'deploy/**'
+    - 'imgs/**'
+    - 'scripts/**'
 
 jobs:
   build:
