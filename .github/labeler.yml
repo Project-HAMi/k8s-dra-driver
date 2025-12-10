@@ -1,0 +1,11 @@
+"bug":
+  - '^[Ff]ix(\(.*\))?:?.*'
+"chore":
+  - '^[Cc]hore(\(.*\))?:?.*'
+"documentation":
+  - '^[Dd]ocs?(\(.*\))?:?.*'
+"enhancement":
+  - '^[Rr]efactor(\(.*\))?:?.*'
+"feature":
+  - '^[Ff]eat(\(.*\))?:?.*'
+
