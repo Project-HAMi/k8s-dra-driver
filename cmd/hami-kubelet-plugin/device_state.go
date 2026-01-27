@@ -156,6 +156,13 @@ func (s *DeviceState) Prepare(ctx context.Context, claim *resourceapi.ResourceCl
 	s.Lock()
 	defer s.Unlock()
 
+  if featuregates.Enabled(featuregates.HAMiCoreSupport) {
+		if len(claim.Status.ReservedFor) > 1 {
+			klog.Error("The claim can only be reservedFor a single Pod with HAMiCoreSupport enabled.")
+			return nil, fmt.Errorf("unable to prepare a claim with more than one Pods in reservedFor")
+		}
+  }
+
 	claimUID := string(claim.UID)
 
 	checkpoint, err := s.getCheckpoint()
