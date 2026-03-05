@@ -41,4 +41,3 @@ func (pgm *PerGPUMutex) Get(gpu string) *sync.Mutex {
 	}
 	return pgm.submutex[gpu]
 }
-

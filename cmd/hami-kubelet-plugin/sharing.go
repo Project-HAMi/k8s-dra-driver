@@ -26,7 +26,6 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
-	"slices"
 	"strconv"
 	"strings"
 	"text/template"
@@ -48,7 +47,9 @@ import (
 	cdispec "tags.cncf.io/container-device-interface/specs-go"
 
 	configapi "github.com/NVIDIA/k8s-dra-driver-gpu/api/nvidia.com/resource/v1beta1"
-	"github.com/NVIDIA/k8s-dra-driver-gpu/pkg/featuregates"
+	//"github.com/NVIDIA/k8s-dra-driver-gpu/pkg/featuregates"
+	"github.com/Project-HAMi/k8s-dra-driver/pkg/featuregates"
+
 )
 
 const (
@@ -104,20 +105,16 @@ func NewTimeSlicingManager(deviceLib *deviceLib) *TimeSlicingManager {
 	}
 }
 
-func (t *TimeSlicingManager) SetTimeSlice(devices UUIDProvider, config *configapi.TimeSlicingConfig) error {
-	// Ensure all devices are full devices
-	if !slices.Equal(devices.UUIDs(), devices.GpuUUIDs()) {
-		return fmt.Errorf("can only set the time-slice interval on full GPUs")
-	}
-
+// `uuids` must be full-GPU (non-MIG) UUIDs. The caller must ensure that.
+func (t *TimeSlicingManager) SetTimeSlice(uuids []string, config *configapi.TimeSlicingConfig) error {
 	// Set the compute mode of the GPU to DEFAULT.
-	err := t.nvdevlib.setComputeMode(devices.UUIDs(), "DEFAULT")
+	err := t.nvdevlib.setComputeMode(uuids, "DEFAULT")
 	if err != nil {
 		return fmt.Errorf("error setting compute mode: %w", err)
 	}
 
 	// Set the time slice based on the config provided.
-	err = t.nvdevlib.setTimeSlice(devices.UUIDs(), config.Interval.Int())
+	err = t.nvdevlib.setTimeSlice(uuids, config.Interval.Int())
 	if err != nil {
 		return fmt.Errorf("error setting time slice: %w", err)
 	}
@@ -449,4 +446,3 @@ func getDefaultShmSize() string {
 	}
 	return fallbackSize
 }
-

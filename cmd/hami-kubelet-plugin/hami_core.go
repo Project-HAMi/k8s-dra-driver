@@ -26,7 +26,6 @@ import (
 
 	"github.com/google/uuid"
 	"github.com/Masterminds/semver"
-	nvdev "github.com/NVIDIA/go-nvlib/pkg/nvlib/device"
 	"github.com/Project-HAMi/k8s-dra-driver/pkg/featuregates"
 	"github.com/spf13/pflag"
 	"github.com/urfave/cli/v2"
@@ -43,9 +42,11 @@ import (
 
 
 // For deviceinfo.goh
+// TODO: Implements a String method for HAMIGpuInfo
 type HAMiGpuInfo struct {
 	GpuInfo
 }
+
 
 func (d *HAMiGpuInfo) CanonicalName() string {
 	// return fmt.Sprintf("hami-gpu-%d-%d", d.minor, d.hamiIndex)
@@ -120,57 +121,29 @@ func (d *HAMiGpuInfo) GetDevice() resourceapi.Device {
 
 
 // For nvlib.go
-func (l deviceLib) enumerateGpusDevicesForHAMiCore(config *Config) (AllocatableDevices, error) {
-	if err := l.Init(); err != nil {
-		return nil, err
+func (l deviceLib) wrapHAMiCoreGpu(parentDev *AllocatableDevice) *AllocatableDevice {
+	hamiGpuInfo := &HAMiGpuInfo{
+		GpuInfo: GpuInfo{
+			UUID:                  parentDev.Gpu.UUID,
+			minor:                 parentDev.Gpu.minor,
+			migEnabled:            parentDev.Gpu.migEnabled,
+			memoryBytes:           parentDev.Gpu.memoryBytes,
+			productName:           parentDev.Gpu.productName,
+			brand:                 parentDev.Gpu.brand,
+			architecture:          parentDev.Gpu.architecture,
+			cudaComputeCapability: parentDev.Gpu.cudaComputeCapability,
+			driverVersion:         parentDev.Gpu.driverVersion,
+			cudaDriverVersion:     parentDev.Gpu.cudaDriverVersion,
+			pcieBusID:             parentDev.Gpu.pcieBusID,
+			pcieRootAttr:          parentDev.Gpu.pcieRootAttr,
+			migProfiles:           parentDev.Gpu.migProfiles,
+			addressingMode:        parentDev.Gpu.addressingMode,
+			health:                parentDev.Gpu.health,
+		},
 	}
-	defer l.alwaysShutdown()
-
-	// splitCount := config.flags.hamiCoreDevSplitCount
-	devices := make(AllocatableDevices)
-	err := l.VisitDevices(func(i int, d nvdev.Device) error {
-		gpuInfo, err := l.getGpuInfo(i, d)
-		if err != nil {
-			return fmt.Errorf("error getting info for GPU %d: %w", i, err)
-		}
-
-		// for idx := range splitCount {
-		hamiGpuInfo := &HAMiGpuInfo{
-			GpuInfo: GpuInfo{
-				UUID:                  gpuInfo.UUID,
-				minor:                 gpuInfo.minor,
-				migEnabled:            gpuInfo.migEnabled,
-				memoryBytes:           gpuInfo.memoryBytes,
-				productName:           gpuInfo.productName,
-				brand:                 gpuInfo.brand,
-				architecture:          gpuInfo.architecture,
-				cudaComputeCapability: gpuInfo.cudaComputeCapability,
-				driverVersion:         gpuInfo.driverVersion,
-				cudaDriverVersion:     gpuInfo.cudaDriverVersion,
-				pcieBusID:             gpuInfo.pcieBusID,
-				pcieRootAttr:          gpuInfo.pcieRootAttr,
-				migProfiles:           gpuInfo.migProfiles,
-			},
-		}
-		deviceInfo := &AllocatableDevice{
-			HAMiGpu: hamiGpuInfo,
-		}
-		name := hamiGpuInfo.CanonicalName()
-		devices[name] = deviceInfo
-		// }
-
-		return nil
-	})
-	if err != nil {
-		return nil, fmt.Errorf("error visiting devices: %w", err)
-	}
-
-	// Debug:
-	for name := range devices {
-		klog.Infof("enumerateGpusDevicesForHAMiCore -- CanonicalName: %s", name)
-	}
-
-	return devices, nil
+	parentDev.HAMiGpu = hamiGpuInfo
+	parentDev.Gpu = nil
+	return parentDev
 }
 
 // For prepared.go
@@ -309,7 +282,7 @@ func (m *HAMiCoreManager) GetCDIContainerEdits(claim *resourceapi.ResourceClaim,
 	}
 }
 
-func (m *HAMiCoreManager) Cleanup(claimUID string, pl PreparedDeviceList) error {
+func (m *HAMiCoreManager) Unprepare(claimUID string, pl PreparedDeviceList) error {
 	path := fmt.Sprintf("%s/vgpu/claims/%s", m.hostHookPath, claimUID)
 	_ = os.RemoveAll(path)
 	return nil
