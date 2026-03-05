@@ -31,13 +31,17 @@ import (
 	"k8s.io/dynamic-resource-allocation/kubeletplugin"
 	"k8s.io/klog/v2"
 
-	"github.com/Project-HAMi/k8s-dra-driver/pkg/version"
+	// "github.com/NVIDIA/k8s-dra-driver-gpu/internal/common"
+	"github.com/Project-HAMi/k8s-dra-driver/pkg/common"
 	// "github.com/NVIDIA/k8s-dra-driver-gpu/internal/info"
+	"github.com/Project-HAMi/k8s-dra-driver/pkg/version"
+	// "github.com/NVIDIA/k8s-dra-driver-gpu/pkg/featuregates"
+	"github.com/Project-HAMi/k8s-dra-driver/pkg/featuregates"
 	pkgflags "github.com/NVIDIA/k8s-dra-driver-gpu/pkg/flags"
 )
 
 const (
-	DriverName                         = "hami-core-gpu.project-hami.io"
+	DriverName                         = "gpu.nvidia.com"
 	DriverPluginCheckpointFileBasename = "checkpoint.json"
 )
 
@@ -54,6 +58,8 @@ type Flags struct {
 	kubeletRegistrarDirectoryPath string
 	kubeletPluginsDirectoryPath   string
 	healthcheckPort               int
+	klogVerbosity                 int
+	additionalXidsToIgnore        string
 }
 
 type Config struct {
@@ -74,8 +80,7 @@ func main() {
 
 func newApp() *cli.App {
 	loggingConfig := pkgflags.NewLoggingConfig()
-	featureGateConfig := newFeatureGateConfig()
-	// featureGateConfig := pkgflags.NewFeatureGateConfig()
+	featureGateConfig := pkgflags.NewFeatureGateConfig()
 	flags := &Flags{}
 
 	cliFlags := []cli.Flag{
@@ -149,6 +154,14 @@ func newApp() *cli.App {
 			Destination: &flags.healthcheckPort,
 			EnvVars:     []string{"HEALTHCHECK_PORT"},
 		},
+		// TODO: change to StringSliceFlag.
+		&cli.StringFlag{
+			Name:        "additional-xids-to-ignore",
+			Usage:       "A comma-separated list of additional XIDs to ignore.",
+			Value:       "",
+			Destination: &flags.additionalXidsToIgnore,
+			EnvVars:     []string{"ADDITIONAL_XIDS_TO_IGNORE"},
+		},
 	}
 	cliFlags = append(cliFlags, flags.kubeClientConfig.Flags()...)
 	cliFlags = append(cliFlags, featureGateConfig.Flags()...)
@@ -156,7 +169,7 @@ func newApp() *cli.App {
 
 	app := &cli.App{
 		Name:            "hami-core-gpu-kubelet-plugin",
-		Usage:           "hami-core-gpu-kubelet-plugin implements a DRA driver plugin for HAMi-Core with NVIDIA GPUs.",
+		Usage:           "hami-core-gpu-kubelet-plugin implements a DRA driver plugin for NVIDIA GPUs with HAMi-Core support",
 		ArgsUsage:       " ",
 		HideHelpCommand: true,
 		Flags:           cliFlags,
@@ -166,10 +179,19 @@ func newApp() *cli.App {
 			}
 			// `loggingConfig` must be applied before doing any logging
 			err := loggingConfig.Apply()
+
+			// Store klog's log verbosity setting in this program's config for
+			// later runtime inspection (it's otherwise not accessible anymore
+			// because we do not expose the raw `cliFlags`.
+			flags.klogVerbosity = int(loggingConfig.Config.Verbosity)
 			pkgflags.LogStartupConfig(flags, loggingConfig)
 			return err
 		},
 		Action: func(c *cli.Context) error {
+			if err := featuregates.ValidateFeatureGates(); err != nil {
+				return fmt.Errorf("feature gate validation failed: %w", err)
+			}
+
 			clientSets, err := flags.kubeClientConfig.NewClientSets()
 			if err != nil {
 				return fmt.Errorf("create client: %w", err)
@@ -190,6 +212,7 @@ func newApp() *cli.App {
 			logs.FlushLogs()
 			return nil
 		},
+		// Version: info.GetVersionString(),
 		Version: version.Version(),
 	}
 
@@ -204,6 +227,8 @@ func newApp() *cli.App {
 
 // RunPlugin initializes and runs the GPU kubelet plugin.
 func RunPlugin(ctx context.Context, config *Config) error {
+	common.StartDebugSignalHandlers()
+
 	// Create the plugin directory
 	err := os.MkdirAll(config.DriverPluginPath(), 0750)
 	if err != nil {
@@ -281,4 +306,3 @@ func (c Config) setNvidiaCDIHookPath() error {
 
 	return nil
 }
-

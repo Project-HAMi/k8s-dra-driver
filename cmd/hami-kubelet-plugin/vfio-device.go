@@ -72,8 +72,8 @@ func NewVfioPciManager(containerDriverRoot string, hostDriverRoot string, nvlib 
 	return vm
 }
 
-// PreChecks tests if vfio-pci device allocations can be used.
-func (vm *VfioPciManager) Prechecks() error {
+// ValidatePassthroughSupport tests if vfio-pci device allocations can be used.
+func (vm *VfioPciManager) ValidatePassthroughSupport() error {
 	if !vm.isVfioPCIModuleLoaded() {
 		return fmt.Errorf("vfio_pci module is not loaded")
 	}
@@ -95,8 +95,7 @@ func (vm *VfioPciManager) isIommuEnabled() (bool, error) {
 	if err != nil {
 		return false, err
 	}
-	// defer f.Close()
-	defer func() { _ = f.Close() }()
+	defer f.Close()
 	_, err = f.Readdirnames(1)
 	if err == io.EOF {
 		return false, nil
@@ -111,7 +110,10 @@ func (vm *VfioPciManager) isIommuEnabled() (bool, error) {
 func (vm *VfioPciManager) isVfioPCIModuleLoaded() bool {
 	f, err := os.Stat(filepath.Join(sysModulesRoot, vfioPciModule))
 	if err != nil {
-		klog.Fatalf("failed to check if vfio_pci module is loaded: %v", err)
+		if os.IsNotExist(err) {
+			return false
+		}
+		klog.Fatalf("Failed to check if vfio_pci module is loaded: %v", err)
 	}
 
 	if !f.IsDir() {
@@ -272,6 +274,10 @@ func GetVfioCommonCDIContainerEdits() *cdiapi.ContainerEdits {
 					Path: filepath.Join(vfioDevicesRoot, "vfio"),
 				},
 			},
+			// Make sure that NVIDIA_VISIBLE_DEVICES is set to void to avoid the
+			// nvidia-container-runtime honoring it in addition to the underlying
+			// runtime honoring CDI.
+			Env: []string{"NVIDIA_VISIBLE_DEVICES=void"},
 		},
 	}
 }
@@ -299,4 +305,3 @@ func execCommandWithChroot(fsRoot, cmd string, args []string) ([]byte, error) {
 func execCommand(cmd string, args []string) ([]byte, error) {
 	return exec.Command(cmd, args...).CombinedOutput()
 }
-
