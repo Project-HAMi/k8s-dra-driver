@@ -74,9 +74,6 @@ jobs:
           echo "tags=${tags}"
         } >> "${GITHUB_OUTPUT}"
 
-    - name: Set up QEMU
-      uses: docker/setup-qemu-action@v3
-
     - name: Set up Docker Buildx
       uses: docker/setup-buildx-action@v3
 
@@ -93,6 +90,7 @@ jobs:
         IMAGE_NAME: ${{ steps.image.outputs.image_name }}
         IMAGE_TAGS: ${{ steps.image.outputs.tags }}
         VERSION: ${{ steps.image.outputs.version }}
-        BUILD_MULTI_ARCH_IMAGES: ${{ github.event_name == 'push' && 'true' || 'false' }}
+        BUILD_MULTI_ARCH_IMAGES: 'true'
+        PLATFORMS: linux/amd64
         PUSH_ON_BUILD: ${{ github.event_name == 'push' && 'true' || 'false' }}
       run: make -f deploy/container/Makefile build

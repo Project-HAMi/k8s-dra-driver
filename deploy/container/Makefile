@@ -28,7 +28,8 @@ DOCKER_BUILD_TAG_OPTIONS = $(foreach tag,$(IMAGE_TAGS),--tag $(IMAGE_NAME):$(tag
 ifeq ($(BUILD_MULTI_ARCH_IMAGES),true)
 BUILDX = buildx
 DOCKER_BUILD_OPTIONS = --output=type=image,push=$(PUSH_ON_BUILD)
-DOCKER_BUILD_PLATFORM_OPTIONS = --platform=linux/amd64,linux/arm64
+PLATFORMS ?= linux/amd64,linux/arm64
+DOCKER_BUILD_PLATFORM_OPTIONS = --platform=$(PLATFORMS)
 else
 # We also support building single-platform images.
 # These are mostly used for local testing and as such we don't allow these to
