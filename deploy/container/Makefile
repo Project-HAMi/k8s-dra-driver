@@ -18,9 +18,7 @@ endif
 IMAGE_VERSION := $(VERSION)
 
 IMAGE_TAG ?= $(IMAGE_VERSION)
-IMAGE_TAGS ?= $(IMAGE_TAG)
 IMAGE = $(IMAGE_NAME):$(IMAGE_TAG)
-DOCKER_BUILD_TAG_OPTIONS = $(foreach tag,$(IMAGE_TAGS),--tag $(IMAGE_NAME):$(tag))
 
 ##### Public rules #####
 .PHONY: build
@@ -28,8 +26,7 @@ DOCKER_BUILD_TAG_OPTIONS = $(foreach tag,$(IMAGE_TAGS),--tag $(IMAGE_NAME):$(tag
 ifeq ($(BUILD_MULTI_ARCH_IMAGES),true)
 BUILDX = buildx
 DOCKER_BUILD_OPTIONS = --output=type=image,push=$(PUSH_ON_BUILD)
-PLATFORMS ?= linux/amd64,linux/arm64
-DOCKER_BUILD_PLATFORM_OPTIONS = --platform=$(PLATFORMS)
+DOCKER_BUILD_PLATFORM_OPTIONS = --platform=linux/amd64,linux/arm64
 else
 # We also support building single-platform images.
 # These are mostly used for local testing and as such we don't allow these to
@@ -50,7 +47,7 @@ build:
 		--provenance=false --sbom=false \
 		$(DOCKER_BUILD_OPTIONS) \
 		$(DOCKER_BUILD_PLATFORM_OPTIONS) \
-		$(DOCKER_BUILD_TAG_OPTIONS) \
+		--tag $(IMAGE) \
 		--build-arg GOLANG_VERSION="$(GOLANG_VERSION)" \
 		--build-arg BASH_STATIC_GIT_REF="$(BASH_STATIC_GIT_REF)" \
 		--build-arg TOOLKIT_CONTAINER_IMAGE="$(TOOLKIT_CONTAINER_IMAGE)" \
