@@ -63,6 +63,6 @@ jobs:
           BASH_STATIC_GIT_REF=${{ steps.args.outputs.bash_static_git_ref }}
           TOOLKIT_CONTAINER_IMAGE=${{ steps.args.outputs.toolkit_container_image }}
           HAMI_CORE_BUILD_IMAGE=${{ steps.args.outputs.hami_core_build_image }}
-          VERSION=${{ steps.prep.outputs.version }}
+          VERSION=${{ steps.args.outputs.version }}
           GIT_COMMIT=${{ steps.args.outputs.git_commit }}
         tags: ${{ env.IMAGE_NAME }}:${{ github.event.inputs.tag }}
