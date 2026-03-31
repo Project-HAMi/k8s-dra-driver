@@ -71,7 +71,7 @@ RUN mv /bashbuild/bash-static/releases/bash-*-static /bashbuild/bash
 # Capture actual file architecture in the build output.
 RUN file /bashbuild/bash
 
-RUN wget -nv -O - https://storage.googleapis.com/golang/go${GOLANG_VERSION}.linux-${BUILDARCH}.tar.gz \
+RUN wget -nv -O - https://dl.google.com/go/go${GOLANG_VERSION}.linux-${BUILDARCH}.tar.gz \
     | tar -C /usr/local -xz
 
 ENV GOPATH=/go
