@@ -92,7 +92,16 @@ rules:
   resources:
   - resourceclaims/status
   verbs:
+  - get
   - update
+  - patch
+- apiGroups:
+  - resource.k8s.io
+  resources:
+  - resourceclaims/driver
+  verbs:
+  - associated-node:update
+  - associated-node:patch
 - apiGroups:
   - ""
   resources:
