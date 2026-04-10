@@ -80,7 +80,8 @@ func main() {
 
 func newApp() *cli.App {
 	loggingConfig := pkgflags.NewLoggingConfig()
-	featureGateConfig := pkgflags.NewFeatureGateConfig()
+	featureGateConfig := newFeatureGateConfig()
+	//featureGateConfig := pkgflags.NewFeatureGateConfig()
 	flags := &Flags{}
 
 	cliFlags := []cli.Flag{

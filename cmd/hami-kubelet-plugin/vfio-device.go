@@ -95,7 +95,11 @@ func (vm *VfioPciManager) isIommuEnabled() (bool, error) {
 	if err != nil {
 		return false, err
 	}
-	defer f.Close()
+	defer func() {
+	  if cerr := f.Close(); cerr != nil {
+	  	klog.Fatalf("Failed to close file %s: %v", kernelIommuGroupPath, cerr)
+	  }
+  }()
 	_, err = f.Readdirnames(1)
 	if err == io.EOF {
 		return false, nil
