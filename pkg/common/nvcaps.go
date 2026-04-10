@@ -95,7 +95,11 @@ func ParseNVCapDeviceInfo(nvcapsFilePath string) (*NVcapDeviceInfo, error) {
 	if err != nil {
 		return nil, err
 	}
-	defer file.Close()
+	defer func() {
+		if cerr := file.Close(); cerr != nil {
+			klog.V(7).Infof("Failed to close file %s: %v", nvcapsFilePath, cerr)
+		}
+	}()
 
 	info := &NVcapDeviceInfo{}
 	major, err := GetDeviceMajor(nvidiaCapsDeviceName)
@@ -178,3 +182,4 @@ func GetDeviceMajor(name string) (int, error) {
 	// bits in size", so in theory it could be smaller than int64).
 	return int(major), nil
 }
+
