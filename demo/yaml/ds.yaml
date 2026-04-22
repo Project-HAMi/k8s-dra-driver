@@ -18,7 +18,7 @@ spec:
     spec:
       initContainers:
       - name: init-container
-        image: projecthami/k8s-dra-driver:v0.0.1-dev
+        image: projecthami/k8s-dra-driver:v0.1.0
         securityContext:
           privileged: true
         command: [bash, /usr/bin/kubelet-plugin-prestart.sh]
@@ -47,13 +47,13 @@ spec:
             sed -i 's/^ModifyDeviceFiles: 1$/ModifyDeviceFiles: 0/' root/gpu-params
             mount --bind root/gpu-params /proc/driver/nvidia/params
           fi
-          hami-kubelet-plugin -v 6
+          hami-kubelet-plugin -v 10
         command:
         - bash
         - -c
         env:
         - name: MASK_NVIDIA_DRIVER_PARAMS
-          value: ""
+          value: "true"
         - name: NVIDIA_DRIVER_ROOT
           value: /
         - name: NVIDIA_VISIBLE_DEVICES
@@ -77,12 +77,12 @@ spec:
         - name: KUBELET_PLUGINS_DIRECTORY_PATH
           value: /var/lib/kubelet/plugins
         - name: IMAGE_NAME
-          value: projecthami/k8s-dra-driver:v0.0.1-dev
+          value: projecthami/k8s-dra-driver:v0.1.0
         lifecycle:
           postStart:
             exec:
               command: ["/bin/bash", "-c", "/usr/bin/vgpu-init.sh /usr/local/vgpu/"]
-        image: projecthami/k8s-dra-driver:v0.0.1-dev
+        image: projecthami/k8s-dra-driver:v0.1.0
         imagePullPolicy: IfNotPresent
         name: gpus
         securityContext:
