@@ -49,7 +49,6 @@ import (
 	configapi "github.com/NVIDIA/k8s-dra-driver-gpu/api/nvidia.com/resource/v1beta1"
 	//"github.com/NVIDIA/k8s-dra-driver-gpu/pkg/featuregates"
 	"github.com/Project-HAMi/k8s-dra-driver/pkg/featuregates"
-
 )
 
 const (

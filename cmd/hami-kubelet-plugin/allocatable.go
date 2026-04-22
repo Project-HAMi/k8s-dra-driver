@@ -38,7 +38,7 @@ type AllocatableDevices map[DeviceName]*AllocatableDevice
 
 // AllocatableDevice represents an individual device that can be allocated.
 type AllocatableDevice struct {
-	HAMiGpu *HAMiGpuInfo
+	HAMiGpu    *HAMiGpuInfo
 	Gpu        *GpuInfo
 	MigDynamic *MigSpec
 	MigStatic  *MigDeviceInfo
@@ -296,7 +296,7 @@ func (d AllocatableDevices) RemoveSiblingDevices(device *AllocatableDevice) {
 func (d *AllocatableDevice) IsHealthy() bool {
 	switch d.Type() {
 	case HAMiGpuDeviceType:
-	   return d.HAMiGpu.health == Healthy
+		return d.HAMiGpu.health == Healthy
 	case GpuDeviceType:
 		return d.Gpu.health == Healthy
 	case MigStaticDeviceType:

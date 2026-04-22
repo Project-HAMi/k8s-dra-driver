@@ -33,7 +33,7 @@ type PreparedDevices []*PreparedDeviceGroup
 
 type PreparedDevice struct {
 	// Represents a HAMi-Core injected GPU.
-	HAMiGpu *PreparedHAMiGpu   `json:"hami-gpu"`
+	HAMiGpu *PreparedHAMiGpu `json:"hami-gpu"`
 	// Represents a prepared full GPU.
 	Gpu *PreparedGpu `json:"gpu"`
 	// Represents a prepared MIG device, regardless of whether this was created

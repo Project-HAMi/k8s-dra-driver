@@ -23,26 +23,24 @@ import (
 	"slices"
 	"strconv"
 
-	"github.com/google/uuid"
 	"github.com/Masterminds/semver"
+	"github.com/google/uuid"
 
 	resourceapi "k8s.io/api/resource/v1"
 	"k8s.io/apimachinery/pkg/api/resource"
-	"k8s.io/klog/v2"
 	"k8s.io/dynamic-resource-allocation/kubeletplugin"
+	"k8s.io/klog/v2"
 	"k8s.io/utils/ptr"
 
 	cdiapi "tags.cncf.io/container-device-interface/pkg/cdi"
 	cdispec "tags.cncf.io/container-device-interface/specs-go"
 )
 
-
 // For deviceinfo.goh
 // TODO: Implements a String method for HAMIGpuInfo
 type HAMiGpuInfo struct {
 	GpuInfo
 }
-
 
 func (d *HAMiGpuInfo) CanonicalName() string {
 	// return fmt.Sprintf("hami-gpu-%d-%d", d.minor, d.hamiIndex)
@@ -92,8 +90,8 @@ func (d *HAMiGpuInfo) GetDevice() resourceapi.Device {
 				RequestPolicy: &resourceapi.CapacityRequestPolicy{
 					Default: resource.NewQuantity(int64(100), resource.DecimalSI),
 					ValidRange: &resourceapi.CapacityRequestPolicyRange{
-						Min: resource.NewQuantity(int64(0), resource.DecimalSI),
-						Max: resource.NewQuantity(int64(100), resource.DecimalSI),
+						Min:  resource.NewQuantity(int64(0), resource.DecimalSI),
+						Max:  resource.NewQuantity(int64(100), resource.DecimalSI),
 						Step: resource.NewQuantity(int64(1), resource.DecimalSI),
 					},
 				},
@@ -103,8 +101,8 @@ func (d *HAMiGpuInfo) GetDevice() resourceapi.Device {
 				RequestPolicy: &resourceapi.CapacityRequestPolicy{
 					Default: resource.NewQuantity(int64(d.memoryBytes), resource.BinarySI),
 					ValidRange: &resourceapi.CapacityRequestPolicyRange{
-						Min: resource.NewQuantity(int64(1048576), resource.BinarySI),
-						Max: resource.NewQuantity(int64(d.memoryBytes), resource.BinarySI),
+						Min:  resource.NewQuantity(int64(1048576), resource.BinarySI),
+						Max:  resource.NewQuantity(int64(d.memoryBytes), resource.BinarySI),
 						Step: resource.NewQuantity(int64(1048576), resource.BinarySI),
 					},
 				},
@@ -114,7 +112,6 @@ func (d *HAMiGpuInfo) GetDevice() resourceapi.Device {
 	}
 	return device
 }
-
 
 // For nvlib.go
 func (l deviceLib) wrapHAMiCoreGpu(parentDev *AllocatableDevice) *AllocatableDevice {
