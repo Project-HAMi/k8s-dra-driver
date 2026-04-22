@@ -37,17 +37,17 @@ import (
 	"github.com/Project-HAMi/k8s-dra-driver/pkg/version"
 	// "github.com/NVIDIA/k8s-dra-driver-gpu/pkg/featuregates"
 	"github.com/Project-HAMi/k8s-dra-driver/pkg/featuregates"
-	pkgflags "github.com/NVIDIA/k8s-dra-driver-gpu/pkg/flags"
+	// pkgflags "github.com/NVIDIA/k8s-dra-driver-gpu/pkg/flags"
+	pkgflags "github.com/Project-HAMi/k8s-dra-driver/pkg/flags"
 )
 
 const (
-	DriverName                         = "gpu.nvidia.com"
+	DriverName                         = "hami-core-gpu.project-hami.io"
 	DriverPluginCheckpointFileBasename = "checkpoint.json"
 )
 
 type Flags struct {
 	kubeClientConfig pkgflags.KubeClientConfig
-
 	nodeName                      string
 	namespace                     string
 	cdiRoot                       string
@@ -80,8 +80,7 @@ func main() {
 
 func newApp() *cli.App {
 	loggingConfig := pkgflags.NewLoggingConfig()
-	featureGateConfig := newFeatureGateConfig()
-	//featureGateConfig := pkgflags.NewFeatureGateConfig()
+	featureGateConfig := pkgflags.NewFeatureGateConfig()
 	flags := &Flags{}
 
 	cliFlags := []cli.Flag{
@@ -189,6 +188,9 @@ func newApp() *cli.App {
 			return err
 		},
 		Action: func(c *cli.Context) error {
+			for k, v := range featuregates.ToMap() {
+				fmt.Println(k, " = ", v)
+			}
 			if err := featuregates.ValidateFeatureGates(); err != nil {
 				return fmt.Errorf("feature gate validation failed: %w", err)
 			}

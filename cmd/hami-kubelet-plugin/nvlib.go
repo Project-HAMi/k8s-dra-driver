@@ -16,6 +16,24 @@
 
 package main
 
+/*
+#cgo LDFLAGS: -ldl
+#define _GNU_SOURCE
+#include <dlfcn.h>
+#include <stdlib.h>
+
+// nvmlAddressingModeAvailable returns 1 if nvmlDeviceGetAddressingMode is
+// present in the already-loaded libnvidia-ml, 0 otherwise.
+// This avoids a hard crash on older drivers (< 575.x) that do not export
+// the symbol, which would otherwise be triggered the first time go-nvml's
+// CGo wrapper calls it.
+static int nvmlAddressingModeAvailable() {
+    void *sym = dlsym(RTLD_DEFAULT, "nvmlDeviceGetAddressingMode");
+    return sym != NULL ? 1 : 0;
+}
+*/
+import "C"
+
 import (
 	"fmt"
 	"maps"
@@ -483,6 +501,16 @@ func (l deviceLib) getGpuInfo(index int, device nvdev.Device) (*GpuInfo, error) 
 	//   - ATS  (Address Translation Service)
 	//   - None (Supported by the platform but currently inactive)
 	//   - ""   (Not supported by the platform)
+  // nvmlDeviceGetAddressingMode was introduced after driver 570.x; skip on
+  // older drivers to avoid a dynamic-linker crash at first call.
+  var addressingMode *string
+  if C.nvmlAddressingModeAvailable() != 0 {
+          if mode, err := device.GetAddressingModeAsString(); err != nil {
+                  klog.Warningf("error getting addressing mode for device %d, continuing without attribute: %v", index, err)
+          } else if mode != "" {
+                  addressingMode = &mode
+          }
+  }
 	var addressingMode *string
 	if mode, err := device.GetAddressingModeAsString(); err != nil {
 		return nil, fmt.Errorf("error getting addressing mode for device %d: %w", index, err)
