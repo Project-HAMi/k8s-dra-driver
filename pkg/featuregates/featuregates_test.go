@@ -415,4 +415,3 @@ func TestFeatureGateErrorHandling(t *testing.T) {
 		require.False(t, fg.Enabled(TestAlphaFeature1), "Feature state should be unchanged after failed mixed operation")
 	})
 }
-

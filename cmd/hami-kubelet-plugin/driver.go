@@ -34,9 +34,9 @@ import (
 	"k8s.io/dynamic-resource-allocation/resourceslice"
 	"k8s.io/klog/v2"
 
-  // "github.com/NVIDIA/k8s-dra-driver-gpu/pkg/featuregates"
-	"github.com/Project-HAMi/k8s-dra-driver/pkg/featuregates"
+	// "github.com/NVIDIA/k8s-dra-driver-gpu/pkg/featuregates"
 	"github.com/NVIDIA/k8s-dra-driver-gpu/pkg/flock"
+	"github.com/Project-HAMi/k8s-dra-driver/pkg/featuregates"
 )
 
 // DriverPrepUprepFlockPath is the path to a lock file used to make sure

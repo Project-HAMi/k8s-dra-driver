@@ -501,21 +501,15 @@ func (l deviceLib) getGpuInfo(index int, device nvdev.Device) (*GpuInfo, error) 
 	//   - ATS  (Address Translation Service)
 	//   - None (Supported by the platform but currently inactive)
 	//   - ""   (Not supported by the platform)
-  // nvmlDeviceGetAddressingMode was introduced after driver 570.x; skip on
-  // older drivers to avoid a dynamic-linker crash at first call.
-  var addressingMode *string
-  if C.nvmlAddressingModeAvailable() != 0 {
-          if mode, err := device.GetAddressingModeAsString(); err != nil {
-                  klog.Warningf("error getting addressing mode for device %d, continuing without attribute: %v", index, err)
-          } else if mode != "" {
-                  addressingMode = &mode
-          }
-  }
+	// nvmlDeviceGetAddressingMode was introduced after driver 570.x; skip on
+	// older drivers to avoid a dynamic-linker crash at first call.
 	var addressingMode *string
-	if mode, err := device.GetAddressingModeAsString(); err != nil {
-		return nil, fmt.Errorf("error getting addressing mode for device %d: %w", index, err)
-	} else if mode != "" {
-		addressingMode = &mode
+	if C.nvmlAddressingModeAvailable() != 0 {
+		if mode, err := device.GetAddressingModeAsString(); err != nil {
+			klog.Warningf("error getting addressing mode for device %d, continuing without attribute: %v", index, err)
+		} else if mode != "" {
+			addressingMode = &mode
+		}
 	}
 
 	var pcieRootAttr *deviceattribute.DeviceAttribute

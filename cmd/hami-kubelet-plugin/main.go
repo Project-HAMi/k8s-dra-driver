@@ -47,7 +47,7 @@ const (
 )
 
 type Flags struct {
-	kubeClientConfig pkgflags.KubeClientConfig
+	kubeClientConfig              pkgflags.KubeClientConfig
 	nodeName                      string
 	namespace                     string
 	cdiRoot                       string

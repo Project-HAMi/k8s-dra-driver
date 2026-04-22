@@ -17,7 +17,7 @@ limitations under the License.
 package version
 
 var (
-	version string
+	version   string
 	nvversion string
 )
 

@@ -6,8 +6,6 @@ github.com/NVIDIA/go-nvlib v0.9.0 h1:GKLIvLJ0uhCtTLLZp2Q8QIDRxOYH45MM4Y5OO3U5Rho
 github.com/NVIDIA/go-nvlib v0.9.0/go.mod h1:7mzx9FSdO9fXWP9NKuZmWkCwhkEcSWQFe2tmFwtLb9c=
 github.com/NVIDIA/go-nvml v0.13.0-1 h1:OLX8Jq3dONuPOQPC7rndB6+iDmDakw0XTYgzMxObkEw=
 github.com/NVIDIA/go-nvml v0.13.0-1/go.mod h1:+KNA7c7gIBH7SKSJ1ntlwkfN80zdx8ovl4hrK3LmPt4=
-github.com/NVIDIA/k8s-dra-driver-gpu v0.0.0-20251107000443-55fc7b0921da h1:HsZ1pBkZEL7CM2uOoyfi5Zr+KeR/cnYL3PD5ctCZrWk=
-github.com/NVIDIA/k8s-dra-driver-gpu v0.0.0-20251107000443-55fc7b0921da/go.mod h1:kdsvPJLiHciZeMVxqYzDhaJYGzhxXVtJ7fK7OyTprCY=
 github.com/NVIDIA/k8s-dra-driver-gpu v0.0.0-20260304152636-db70fc24dd3f h1:sud+Wi40+/EGJKI5R04yWOGM4mKcqEZwH6cflaG007E=
 github.com/NVIDIA/k8s-dra-driver-gpu v0.0.0-20260304152636-db70fc24dd3f/go.mod h1:gQf1wA0RPy3ygdBpIsnkLYtUhUTUouPbMXYNrgRo/Y8=
 github.com/NVIDIA/nvidia-container-toolkit v1.18.2 h1:S46SDe5aez/qeRvTybHQqOXPNcRphLnIuXoqDDyx8YY=
@@ -254,8 +252,6 @@ k8s.io/kube-openapi v0.0.0-20250710124328-f3f2b991d03b h1:MloQ9/bdJyIu9lb1PzujOP
 k8s.io/kube-openapi v0.0.0-20250710124328-f3f2b991d03b/go.mod h1:UZ2yyWbFTpuhSbFhv24aGNOdoRdJZgsIObGBUaYVsts=
 k8s.io/kubelet v0.34.1 h1:doAaTA9/Yfzbdq/u/LveZeONp96CwX9giW6b+oHn4m4=
 k8s.io/kubelet v0.34.1/go.mod h1:PtV3Ese8iOM19gSooFoQT9iyRisbmJdAPuDImuccbbA=
-k8s.io/kubernetes v1.34.1 h1:F3p8dtpv+i8zQoebZeK5zBqM1g9x1aIdnA5vthvcuUk=
-k8s.io/kubernetes v1.34.1/go.mod h1:iu+FhII+Oc/1gGWLJcer6wpyih441aNFHl7Pvm8yPto=
 k8s.io/kubernetes v1.34.2 h1:WQdDvYJazkmkwSncgNwGvVtaCt4TYXIU3wSMRgvp3MI=
 k8s.io/kubernetes v1.34.2/go.mod h1:m6pZk6a179pRo2wsTiCPORJ86iOEQmfIzUvtyEF8BwA=
 k8s.io/mount-utils v0.34.1 h1:zMBEFav8Rxwm54S8srzy5FxAc4KQ3X4ZcjnqTCzHmZk=

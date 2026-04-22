@@ -182,4 +182,3 @@ func GetDeviceMajor(name string) (int, error) {
 	// bits in size", so in theory it could be smaller than int64).
 	return int(major), nil
 }
-

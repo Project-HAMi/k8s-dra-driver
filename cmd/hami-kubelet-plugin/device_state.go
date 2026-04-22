@@ -36,8 +36,8 @@ import (
 
 	configapi "github.com/NVIDIA/k8s-dra-driver-gpu/api/nvidia.com/resource/v1beta1"
 	// "github.com/NVIDIA/k8s-dra-driver-gpu/pkg/featuregates"
-	"github.com/Project-HAMi/k8s-dra-driver/pkg/featuregates"
 	"github.com/NVIDIA/k8s-dra-driver-gpu/pkg/flock"
+	"github.com/Project-HAMi/k8s-dra-driver/pkg/featuregates"
 )
 
 type OpaqueDeviceConfig struct {
@@ -126,7 +126,6 @@ func NewDeviceState(ctx context.Context, config *Config) (*DeviceState, error) {
 		hamiCoreManager = NewHAMiCoreManager(nvdevlib)
 	}
 
-
 	var tsManager *TimeSlicingManager
 	if featuregates.Enabled(featuregates.TimeSlicingSettings) {
 		tsManager = NewTimeSlicingManager(nvdevlib)
@@ -208,7 +207,7 @@ func (s *DeviceState) Prepare(ctx context.Context, claim *resourceapi.ResourceCl
 	// unprepare noop: claim preparation started but not completed).
 	preparedClaim, exists := cp.V2.PreparedClaims[claimUID]
 	if exists && preparedClaim.CheckpointState == ClaimCheckpointStatePrepareCompleted {
-	  if featuregates.Enabled(featuregates.HAMiCoreSupport) {
+		if featuregates.Enabled(featuregates.HAMiCoreSupport) {
 			return nil, fmt.Errorf("claims in PrepareCompleted state are not supported when HAMiCoreSupport enabled")
 		}
 		// Make this a noop. Associated device(s) has/ave been prepared by us.
@@ -219,26 +218,26 @@ func (s *DeviceState) Prepare(ctx context.Context, claim *resourceapi.ResourceCl
 	}
 
 	if !featuregates.Enabled(featuregates.HAMiCoreSupport) {
-	  // In certain scenarios, the same device can be prepared/allocated more than once for different claims
-	  // due to races between data processing in different goroutines in the scheduler, or when pods are
-	  // force-deleted while the kubelet still considers the devices allocated.
-	  // To prevent this, we check whether any device requested in the incoming claim has already been prepared
-	  // and fail the request if so (unless the prior preparation was performed with admin access).
-	  // More details: https://github.com/kubernetes/kubernetes/pull/136269
-	  if err := s.validateNoOverlappingPreparedDevices(cp, claim); err != nil {
-	  	return nil, fmt.Errorf("unable to prepare claim %v: %w", claimUID, err)
-	  }
+		// In certain scenarios, the same device can be prepared/allocated more than once for different claims
+		// due to races between data processing in different goroutines in the scheduler, or when pods are
+		// force-deleted while the kubelet still considers the devices allocated.
+		// To prevent this, we check whether any device requested in the incoming claim has already been prepared
+		// and fail the request if so (unless the prior preparation was performed with admin access).
+		// More details: https://github.com/kubernetes/kubernetes/pull/136269
+		if err := s.validateNoOverlappingPreparedDevices(cp, claim); err != nil {
+			return nil, fmt.Errorf("unable to prepare claim %v: %w", claimUID, err)
+		}
 
-	  // Relevant for DynamicMIG: a previous preparation attempt for the same
-	  // claim might have resulted in complete or partial GI/CI creation. Roll
-	  // that back, and retry creation from scratch (that maybe can later be
-	  // optimized into filling the gaps).
-	  if exists && preparedClaim.CheckpointState == ClaimCheckpointStatePrepareStarted {
-	  	klog.V(4).Infof("Claim %s already in PrepareStarted state: attempt rollback before new prepare", ResourceClaimToString(claim))
-	  	if err := s.unpreparePartiallyPrepairedClaim(claimUID, preparedClaim, cp); err != nil {
-	  		return nil, fmt.Errorf("unprepare failed for partially prepared claim %s failed: %w", PreparedClaimToString(&preparedClaim, claimUID), err)
-	  	}
-	  }
+		// Relevant for DynamicMIG: a previous preparation attempt for the same
+		// claim might have resulted in complete or partial GI/CI creation. Roll
+		// that back, and retry creation from scratch (that maybe can later be
+		// optimized into filling the gaps).
+		if exists && preparedClaim.CheckpointState == ClaimCheckpointStatePrepareStarted {
+			klog.V(4).Infof("Claim %s already in PrepareStarted state: attempt rollback before new prepare", ResourceClaimToString(claim))
+			if err := s.unpreparePartiallyPrepairedClaim(claimUID, preparedClaim, cp); err != nil {
+				return nil, fmt.Errorf("unprepare failed for partially prepared claim %s failed: %w", PreparedClaimToString(&preparedClaim, claimUID), err)
+			}
+		}
 	}
 
 	tucp0 := time.Now()
@@ -852,10 +851,10 @@ func (s *DeviceState) unprepareDevices(ctx context.Context, claimUID string, dev
 		}
 
 		if featuregates.Enabled(featuregates.HAMiCoreSupport) {
-		  err := s.hamiCoreManager.Unprepare(claimUID, group.Devices.HAMiGpus())
-		  if err != nil {
-		  	return fmt.Errorf("error cleanup hami devices: %w", err)
-		  }
+			err := s.hamiCoreManager.Unprepare(claimUID, group.Devices.HAMiGpus())
+			if err != nil {
+				return fmt.Errorf("error cleanup hami devices: %w", err)
+			}
 		}
 
 		// Stop any MPS control daemons started for each group of prepared devices.
