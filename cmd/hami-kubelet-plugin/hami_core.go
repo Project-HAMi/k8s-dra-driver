@@ -22,13 +22,9 @@ import (
 	"os"
 	"slices"
 	"strconv"
-	"strings"
 
 	"github.com/google/uuid"
 	"github.com/Masterminds/semver"
-	"github.com/Project-HAMi/k8s-dra-driver/pkg/featuregates"
-	"github.com/spf13/pflag"
-	"github.com/urfave/cli/v2"
 
 	resourceapi "k8s.io/api/resource/v1"
 	"k8s.io/apimachinery/pkg/api/resource"
@@ -290,41 +286,3 @@ func (m *HAMiCoreManager) Unprepare(claimUID string, pl PreparedDeviceList) erro
 
 // For types.go
 const HAMiGpuDeviceType = "hami-gpu"
-
-// For FeatureGates
-type FeatureGateConfig struct{}
-
-// NewFeatureGateConfig creates a new unified feature gate configuration.
-func newFeatureGateConfig() *FeatureGateConfig {
-	return &FeatureGateConfig{}
-}
-
-// Flags returns the CLI flags for the unified feature gate configuration.
-func (f *FeatureGateConfig) Flags() []cli.Flag {
-	var fs pflag.FlagSet
-
-	// Add the unified feature gates flag containing both project and logging features
-	fs.AddFlag(&pflag.Flag{
-		Name: "feature-gates",
-		Usage: "A set of key=value pairs that describe feature gates for alpha/experimental features. " +
-			"Options are:\n     " + strings.Join(featuregates.KnownFeatures(), "\n     "),
-		Value: featuregates.FeatureGates.(pflag.Value), //nolint:forcetypeassert // No need for type check: FeatureGates is a *featuregate.featureGate, which implements pflag.Value.
-	})
-
-	var flags []cli.Flag
-	fs.VisitAll(func(flag *pflag.Flag) {
-		flags = append(flags, pflagToCLI(flag, "Feature Gates:"))
-	})
-	return flags
-}
-
-func pflagToCLI(flag *pflag.Flag, category string) cli.Flag {
-	return &cli.GenericFlag{
-		Name:        flag.Name,
-		Category:    category,
-		Usage:       flag.Usage,
-		Value:       flag.Value,
-		Destination: flag.Value,
-		EnvVars:     []string{strings.ToUpper(strings.ReplaceAll(flag.Name, "-", "_"))},
-	}
-}
