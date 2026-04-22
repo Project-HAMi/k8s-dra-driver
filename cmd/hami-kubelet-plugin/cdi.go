@@ -215,6 +215,17 @@ func (cdi *CDIHandler) CreateClaimSpecFile(claimUID string, preparedDevices Prep
 
 			var dspec cdispec.Device
 
+			if dev.Type() == HAMiGpuDeviceType {
+				uuid = dev.HAMiGpu.Info.UUID
+				// Get (copy of) cached CDI spec (is safe to be mutated below,
+				// w/o compromising cache).
+				dspecsgpu, err := cdi.GetDeviceSpecsByUUIDCached(uuid)
+				if err != nil {
+					return fmt.Errorf("unable to get device spec for %s: %w", dname, err)
+				}
+				dspec = dspecsgpu[0]
+			}
+
 			if dev.Type() == GpuDeviceType {
 				uuid = dev.Gpu.Info.UUID
 				// Get (copy of) cached CDI spec (is safe to be mutated below,

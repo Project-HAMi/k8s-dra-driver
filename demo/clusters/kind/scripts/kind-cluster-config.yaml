@@ -68,3 +68,11 @@ nodes:
   # TODO: Remove this once we have a version of the toolkit where this is not required
   - hostPath: /run/nvidia-fabricmanager/socket
     containerPath: /run/nvidia-fabricmanager/socket
+  - hostPath: /usr/bin/nvidia-ctk
+    containerPath: /usr/bin/nvidia-ctk
+  - hostPath: /sys/bus
+    containerPath: /sys/bus
+    readOnly: false
+  - hostPath: /dev/vfio
+    containerPath: /dev/vfio
+    readOnly: false
