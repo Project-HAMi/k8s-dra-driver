@@ -7,18 +7,68 @@ metadata:
   labels:
     {{- include "hami-dra-driver.labels" . | nindent 4 }}
 rules:
-- apiGroups: ["resource.k8s.io"]
-  resources: ["resourceclaims"]
-  verbs: ["get", "list", "watch"]
-- apiGroups: ["resource.k8s.io"]
-  resources: ["resourceslices"]
-  verbs: ["get", "list", "watch", "create", "update", "delete"]
-- apiGroups: [""]
-  resources: ["nodes"]
-  verbs: ["get", "list", "watch", "update"]
-- apiGroups: [""]
-  resources: ["pods"]
-  verbs: ["get", "list", "watch"]
+- apiGroups: 
+  - resource.k8s.io
+  resources:
+  - resourceclaims
+  verbs: 
+  - get
+  - list
+  - watch
+- apiGroups:
+  - resource.k8s.io
+  resources:
+  - resourceclaimtemplates
+  verbs:
+  - get
+  - list
+  - watch
+  - create
+  - update
+  - delete
+- apiGroups:
+  - resource.k8s.io
+  resources:
+  - resourceslices
+  verbs: 
+  - get
+  - list
+  - watch
+  - create
+  - update
+  - delete
+- apiGroups:
+  - resource.k8s.io
+  resources:
+  - resourceclaims/status
+  verbs:
+  - get
+  - update
+  - patch
+- apiGroups:
+  - resource.k8s.io
+  resources:
+  - resourceclaims/driver
+  verbs:
+  - associated-node:update
+  - associated-node:patch
+- apiGroups:
+  - ""
+  resources:
+  - nodes
+  verbs:
+  - get
+  - list
+  - watch
+  - update
+- apiGroups:
+  - ""
+  resources: 
+  - pods
+  verbs:
+  - get
+  - list
+  - watch
 ---
 apiVersion: v1
 kind: ServiceAccount
@@ -58,9 +108,18 @@ metadata:
     {{- include "hami-dra-driver.labels" . | nindent 4 }}
 {{- if (and .Values.resources.gpus.enabled .Values.featureGates.MPSSupport) }}
 rules:
-- apiGroups: ["apps"]
-  resources: ["deployments"]
-  verbs: ["get", "list", "watch", "create", "update", "patch", "delete"]
+- apiGroups:
+  - apps
+  resources:
+  - deployments
+  verbs:
+  - get
+  - list
+  - watch
+  - create
+  - update
+  - patch
+  - delete
 {{- end }}
 ---
 apiVersion: rbac.authorization.k8s.io/v1
