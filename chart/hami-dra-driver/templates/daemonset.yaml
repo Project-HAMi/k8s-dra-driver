@@ -31,7 +31,7 @@ spec:
       imagePullSecrets:
         {{- toYaml . | nindent 8 }}
       {{- end }}
-      serviceAccountName: {{ include "hami-dra-driver.serviceAccountName" . }}
+      serviceAccountName: {{ include "hami-dra-driver.serviceAccountName" . }}-kubeletplugin
       {{- with .Values.kubeletPlugin.podSecurityContext }}
       securityContext:
         {{- toYaml . | nindent 8 }}

@@ -26,7 +26,7 @@ find "$SOURCE_DIR" -type f | while read -r source_file; do
     relative_path="${source_file#$SOURCE_DIR}"
 
     # Construct the destination file path
-    dest_file="$DEST_DIR$relative_path"
+    dest_file="${DEST_DIR%/}/$relative_path"
 
     # If the destination file doesn't exist, copy the source file
     if [ ! -f "$dest_file" ]; then
