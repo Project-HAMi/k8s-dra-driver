@@ -254,7 +254,9 @@ func (l deviceLib) GetPerGpuAllocatableDevices(indices ...int) (PerGPUMinorAlloc
 		l.gpuUUIDbyMinor[gpuInfo.minor] = gpuInfo.UUID
 
 		if featuregates.Enabled(featuregates.HAMiCoreSupport) {
-			thisGPUAllocatable[gpuInfo.CanonicalName()] = l.wrapHAMiCoreGpu(parentdev)
+			hamiDev := l.wrapHAMiCoreGpu(parentdev)
+			thisGPUAllocatable[hamiDev.CanonicalName()] = hamiDev
+			perGPUAllocatable[gpuInfo.minor] = thisGPUAllocatable
 			return nil
 		}
 
