@@ -17,7 +17,7 @@
 
 ARG TOOLKIT_CONTAINER_IMAGE=unknown
 
-FROM --platform=$BUILDPLATFORM nvidia/cuda:12.3.2-devel-ubuntu20.04 AS hami-core-build
+FROM --platform=$BUILDPLATFORM nvidia/cuda:12.9.1-cudnn-devel-ubuntu20.04 AS hami-core-build
 
 ENV DEBIAN_FRONTEND=noninteractive
 RUN apt-get -y update; apt-get -y --no-install-recommends install cmake git && rm -rf /var/lib/apt/lists/*
