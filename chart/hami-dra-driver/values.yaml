@@ -78,6 +78,10 @@ featureGates: {}
 # 0 = errors/warnings/info only; higher numbers increase verbosity.
 logVerbosity: "4"
 
+monitor:
+  enabled: false
+  resources: {}
+
 kubeletPlugin:
   priorityClassName: "system-node-critical"
   updateStrategy:

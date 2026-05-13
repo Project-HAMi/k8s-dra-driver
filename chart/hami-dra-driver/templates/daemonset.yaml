@@ -176,6 +176,36 @@ spec:
           mountPath: /proc/
           mountPropagation: Bidirectional
         {{- end }}
+      {{- if .Values.monitor.enabled }}
+      - name: monitor
+        image: {{ include "hami-dra-driver.fullimage" . }}
+        imagePullPolicy: {{ .Values.image.pullPolicy }}
+        securityContext:
+          privileged: true
+        command: ["hami-core-monitor"]
+        args:
+          - "--node-name=$(NODE_NAME)"
+          - "--hook-path={{ .Values.driver.vgpuInitPath }}"
+          - "--bind-address=:9394"
+        env:
+        - name: NODE_NAME
+          valueFrom:
+            fieldRef:
+              fieldPath: spec.nodeName
+        {{- with .Values.monitor.resources }}
+        resources:
+          {{- toYaml . | nindent 10 }}
+        {{- end }}
+        ports:
+        - name: metrics
+          containerPort: 9394
+          protocol: TCP
+        volumeMounts:
+        - name: host-vgpu
+          mountPath: {{ .Values.driver.vgpuInitPath | quote }}
+        - name: host-tmp
+          mountPath: {{ .Values.driver.hostTmp | quote }}
+      {{- end }}
       volumes:
       - name: plugins-registry
         hostPath:

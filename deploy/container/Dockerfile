@@ -142,6 +142,7 @@ COPY --from=build   /build/scripts/unbind_from_driver.sh     /usr/bin/unbind_fro
 COPY /hack/kubelet-plugin-prestart.sh /usr/bin/kubelet-plugin-prestart.sh
 
 COPY --from=build   /artifacts/hami-kubelet-plugin           /usr/bin/hami-kubelet-plugin
+COPY --from=build   /artifacts/hami-core-monitor             /usr/bin/hami-core-monitor
 
 COPY --from=hami-core-build /k8s-dra-driver/lib/local /usr/local
 COPY --from=hami-core-build /k8s-dra-driver/lib/nvidia/vgpu-init.sh /usr/bin/vgpu-init.sh
@@ -152,6 +153,7 @@ USER root:root
 
 # Smoke-test executables (provide early build feedback).
 RUN ["/usr/bin/hami-kubelet-plugin", "--version"]
+RUN ["/usr/bin/hami-core-monitor", "--version"]
 RUN ["/bin/bash", "--version"]
 
 ENTRYPOINT ["/bin/bash"]
