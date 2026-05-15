@@ -16,6 +16,9 @@
 # limitations under the License.
 
 ARG TOOLKIT_CONTAINER_IMAGE=unknown
+ARG HAMI_VGPUMONITOR_IMAGE=projecthami/hami:v2.9.0
+
+FROM ${HAMI_VGPUMONITOR_IMAGE} AS vgpumonitor
 
 FROM --platform=$BUILDPLATFORM nvidia/cuda:12.9.1-cudnn-devel-ubuntu20.04 AS hami-core-build
 
@@ -141,7 +144,8 @@ COPY --from=build   /build/scripts/bind_to_driver.sh         /usr/bin/bind_to_dr
 COPY --from=build   /build/scripts/unbind_from_driver.sh     /usr/bin/unbind_from_driver.sh
 COPY /hack/kubelet-plugin-prestart.sh /usr/bin/kubelet-plugin-prestart.sh
 
-COPY --from=build   /artifacts/hami-kubelet-plugin           /usr/bin/hami-kubelet-plugin
+COPY --from=build        /artifacts/hami-kubelet-plugin      /usr/bin/hami-kubelet-plugin
+COPY --from=vgpumonitor  /k8s-vgpu/bin/vGPUmonitor           /usr/bin/vGPUmonitor
 
 COPY --from=hami-core-build /k8s-dra-driver/lib/local /usr/local
 COPY --from=hami-core-build /k8s-dra-driver/lib/nvidia/vgpu-init.sh /usr/bin/vgpu-init.sh
@@ -152,6 +156,7 @@ USER root:root
 
 # Smoke-test executables (provide early build feedback).
 RUN ["/usr/bin/hami-kubelet-plugin", "--version"]
+RUN ["/usr/bin/vGPUmonitor", "--version"]
 RUN ["/bin/bash", "--version"]
 
 ENTRYPOINT ["/bin/bash"]
