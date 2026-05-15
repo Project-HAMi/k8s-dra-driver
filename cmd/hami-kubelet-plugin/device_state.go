@@ -125,7 +125,10 @@ func NewDeviceState(ctx context.Context, config *Config) (*DeviceState, error) {
 
 	var hamiCoreManager *HAMiCoreManager
 	if featuregates.Enabled(featuregates.HAMiCoreSupport) {
-		hamiCoreManager = NewHAMiCoreManager(nvdevlib)
+		hamiCoreManager = NewHAMiCoreManager(nvdevlib, config.flags.hostHookPath, config.clientsets.Core, config.flags.nodeName)
+		if !hamiCoreManager.WaitForPodCacheSync(ctx) {
+			klog.Warningf("HAMiCoreManager Pod cache sync was cancelled or timed out; claim-to-pod resolution may be unavailable initially")
+		}
 	}
 
 	var tsManager *TimeSlicingManager

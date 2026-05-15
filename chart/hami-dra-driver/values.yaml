@@ -65,6 +65,7 @@ driver:
   cdiRoot: /var/run/cdi
   vgpuInitPath: /usr/local/vgpu
   hostTmp: /tmp
+  hostHookPath: /usr/local
 
 # Feature gates forwarded to the hami-kubelet-plugin binary as the
 # FEATURE_GATES environment variable.

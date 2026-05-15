@@ -66,6 +66,7 @@ build:
 		--build-arg BASH_STATIC_GIT_REF="$(BASH_STATIC_GIT_REF)" \
 		--build-arg TOOLKIT_CONTAINER_IMAGE="$(TOOLKIT_CONTAINER_IMAGE)" \
 		--build-arg HAMI_CORE_BUILD_IMAGE="$(HAMI_CORE_BUILD_IMAGE)" \
+		--build-arg HAMI_VGPUMONITOR_IMAGE="$(HAMI_VGPUMONITOR_IMAGE)" \
 		--build-arg VERSION="$(VERSION)" \
 		--build-arg GIT_COMMIT="$(GIT_COMMIT)" \
 		--progress=plain \

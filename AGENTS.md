@@ -151,20 +151,20 @@ This section defines the architectural agents within the project for SDD.
 *   **Constraints:** Used exclusively within the `DynamicMIG` feature gate code paths.
 
 ### 9. HAMi Core Monitor (Metrics & QoS Agent)
-**Source:** `cmd/hami-core-monitor/`
+**Source:** upstream `vGPUmonitor` binary (from `projecthami/hami:${HAMI_VGPUMONITOR_IMAGE}`)
 *   **Role:** Exports Prometheus GPU metrics and performs soft-QoS feedback for HAMi-Core virtualized workloads.
 *   **Responsibilities:**
-    *   Scans `<hostHookPath>/vgpu/claims/<claimUID>/*.cache` and `mmap(2)` reads the shared-memory usage structures written by `libvgpu.so`.
+    *   Scans `<hostHookPath>/vgpu/containers/<podUID>_<containerName>/` for `.cache` files created by `libvgpu.so`.
     *   Auto-detects v0 (`1197897` byte) and v1 (`majorVersion == 1`) cache formats, providing backward compatibility.
-    *   Emits per-claim vGPU metrics with pod-aware labels via an informer-based `ClaimMapper` that watches node-scoped Pods and cluster-wide ResourceClaims. Only maps claims whose `DeviceClassName` is `hami-core-gpu.project-hami.io`.
+    *   Emits per-container vGPU metrics with pod-aware labels.
     *   Emits host-level GPU metrics (`hami_host_gpu_memory_used_bytes`, `hami_host_gpu_utilization_ratio`) via NVML.
-    *   Runs a periodic soft-QoS feedback loop (`watchAndFeedback`) that inspects claim cache utilization and blocks lower-priority GPU tasks when contention is detected.
-    *   Serves metrics on `:9394/metrics` through a dedicated Prometheus registry (`prometheus.NewRegistry`) with modern metric names only (legacy names removed).
-*   **Constraints:**
-    *   Must run on the same node as the workloads it monitors (DaemonSet sidecar in the kubelet plugin pod).
+    *   Applies soft-QoS feedback (`recentKernel`/`utilizationSwitch`) by reading/writing the mmaped shared-region.
+    *   Serves metrics on `:9394/metrics`.
+*   **Constraints (DRA Mode):**
+    *   Runs as a DaemonSet sidecar in the kubelet plugin pod.
+    *   Activated by `DRA_MODE=true`; in this mode MIG metrics collection and stale-cache self-cleanup are disabled (the DRA driver owns lifecycle cleanup).
+    *   Requires `HOOK_PATH` and `NODE_NAME` environment variables.
     *   Requires `host-vgpu` and `host-tmp` volume mounts for cache access.
-    *   Gracefully degradates to `"unknown"` pod labels when Kubernetes API is unreachable.
-    *   No legacy metric format support — targets HAMi ≥ v2.9.0.
 
 ---
 
@@ -241,7 +241,7 @@ The project produces a single distroless-based container image that bundles all 
 | Path in Image | Source Stage | Purpose |
 |---|---|---|
 | `/usr/bin/hami-kubelet-plugin` | `build` | Main Driver Agent binary. |
-| `/usr/bin/hami-core-monitor` | `build` | GPU monitor and Prometheus metrics exporter for HAMi-Core. |
+| `/usr/bin/vGPUmonitor` | upstream HAMi image (`projecthami/hami:*`) | GPU monitor and Prometheus metrics exporter for HAMi-Core. |
 | `/usr/local/lib/hami/libvgpu.so` | `hami-core-build` | Enforcement library injected into containers. |
 | `/usr/local/lib/hami/ld.so.preload` | `hami-core-build` | Preload config that activates `libvgpu.so` in containers. |
 | `/usr/bin/vgpu-init.sh` | `hami-core-build` | Node-level initialization script for vGPU. |
@@ -263,7 +263,7 @@ helm install hami-dra-driver ./chart/hami-dra-driver \
 ```
 
 Key templates:
-- `daemonset.yaml` — Deploys the kubelet plugin DaemonSet; conditionally injects the `hami-core-monitor` sidecar when `monitor.enabled=true`.
+- `daemonset.yaml` — Deploys the kubelet plugin DaemonSet; conditionally injects the `vGPUmonitor` sidecar when `monitor.enabled=true`.
 - `rbac-kubeletplugin.yaml.yaml` — RBAC including granular DRA status authorization rules.
 - `deviceclass-hami-gpu.yaml` — The `DeviceClass` for `hami-core-gpu.project-hami.io`.
 - `validation.yaml` — Helm validation hooks.
@@ -310,4 +310,4 @@ make -f deploy/container/Makefile build BUILD_MULTI_ARCH_IMAGES=true PUSH_ON_BUI
 | `0d0d90a` | feat: Support install with helm chart | Added `chart/hami-dra-driver/` for Helm-based cluster deployment. |
 | `a2ad09e` | fix: inject failed for hami-gpu | Prepare logic bypasses overlap validation and partial-rollback when `HAMiCoreSupport` is enabled; completed claims are non-idempotent. |
 | `6841f23` | fix: invalide featuregates | `pkg/flags/` package extracted for reusable CLI flags (`FeatureGateConfig`, `LoggingConfig`, `KubeClientConfig`); `ComputeDomainCliques` default changed to `false`. |
-| `HEAD` | feat: add hami-core-monitor | Added `cmd/hami-core-monitor/` as a standalone metrics exporter and soft-QoS agent with `pkg/monitor/` shared-memory cache reader. Helm chart supports `monitor.enabled` toggle. Legacy metrics removed. |
+| `HEAD` | feat: add vGPUmonitor DRA support | Replaced `cmd/hami-core-monitor/` with upstream `vGPUmonitor`. DRA driver creates `<podUID>_<containerName>/<claimUID>.cache` layout. `HAMI_VGPUMONITOR_IMAGE` build-arg is configurable. |
