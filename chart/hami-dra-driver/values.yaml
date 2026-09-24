@@ -63,7 +63,7 @@ serviceAccount:
 # HAMi-specific host paths
 driver:
   cdiRoot: /var/run/cdi
-  vgpuInitPath: /usr/local/vgpu
+  hostHookPath: /usr/local
   hostTmp: /tmp
 
 # Feature gates forwarded to the hami-kubelet-plugin binary as the
