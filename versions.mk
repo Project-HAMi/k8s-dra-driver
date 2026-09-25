@@ -30,6 +30,9 @@ vVERSION := v$(VERSION:v%=%)
 # The image to build hami-core lib
 HAMI_CORE_BUILD_IMAGE=nvidia/cuda:12.3.2-devel-ubuntu20.04
 
+# The upstream HAMi image to extract vGPUmonitor from
+HAMI_VGPUMONITOR_IMAGE ?= projecthami/hami:v2.9.0
+
 GOLANG_VERSION := $(shell ./hack/golang-version.sh)
 TOOLKIT_CONTAINER_IMAGE := $(shell ./hack/toolkit-container-image.sh)
 BASH_STATIC_GIT_REF := 021f5f29f665c92ca16a369d9f27e288c3aed0c6

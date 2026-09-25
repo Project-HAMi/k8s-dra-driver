@@ -53,6 +53,7 @@ type Flags struct {
 	cdiRoot                       string
 	containerDriverRoot           string
 	hostDriverRoot                string
+	hostHookPath                  string
 	nvidiaCDIHookPath             string
 	imageName                     string
 	kubeletRegistrarDirectoryPath string
@@ -119,6 +120,13 @@ func newApp() *cli.App {
 			Usage:       "the path where the NVIDIA driver root is mounted in the container; used for generating CDI specifications",
 			Destination: &flags.containerDriverRoot,
 			EnvVars:     []string{"DRIVER_ROOT_CTR_PATH"},
+		},
+		&cli.StringFlag{
+			Name:        "host-hook-path",
+			Value:       "/usr/local",
+			Usage:       "the host path where vGPU hooks and claim caches are rooted (the container must have this path mounted)",
+			Destination: &flags.hostHookPath,
+			EnvVars:     []string{"HOOK_PATH"},
 		},
 		&cli.StringFlag{
 			Name:        "nvidia-cdi-hook-path",

@@ -24,7 +24,8 @@ import (
 	"github.com/urfave/cli/v2"
 	"k8s.io/component-base/featuregate"
 
-	"github.com/NVIDIA/k8s-dra-driver-gpu/pkg/featuregates"
+	// "github.com/NVIDIA/k8s-dra-driver-gpu/pkg/featuregates"
+	"github.com/Project-HAMi/k8s-dra-driver/pkg/featuregates"
 )
 
 // Test feature constants for different scenarios.

@@ -288,6 +288,10 @@ func (d *driver) Shutdown() error {
 
 	d.wg.Wait()
 
+	if d.state.hamiCoreManager != nil {
+		d.state.hamiCoreManager.Stop()
+	}
+
 	if err := d.state.checkpointCleanupManager.Stop(); err != nil {
 		return fmt.Errorf("error stopping CheckpointCleanupManager: %w", err)
 	}
