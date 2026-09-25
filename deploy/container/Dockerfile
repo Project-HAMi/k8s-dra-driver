@@ -1,5 +1,6 @@
-# syntax=docker.io/docker/dockerfile:1.7-labs
-# The above enables the COPY --exclude + --parent flags
+# syntax=docker.io/docker/dockerfile:1.11
+# 1.11 is the first frontend that exposes BuildKit's built-in BUILDPLATFORM to
+# an `ARG BUILDPLATFORM` declaration, which the platform handling below needs.
 #
 # Copyright (c) 2019-2025, NVIDIA CORPORATION.  All rights reserved.
 #
@@ -17,13 +18,19 @@
 
 ARG TOOLKIT_CONTAINER_IMAGE=unknown
 
-FROM --platform=$BUILDPLATFORM nvidia/cuda:12.9.1-cudnn-devel-ubuntu20.04 AS hami-core-build
+# Declared without a default so BuildKit keeps filling it in, while a classic
+# builder can supply it with `--build-arg BUILDPLATFORM=linux/<arch>`. A default
+# would override BuildKit's value and pin every build to that platform.
+ARG BUILDPLATFORM
+
+FROM --platform=${BUILDPLATFORM} nvidia/cuda:12.9.1-cudnn-devel-ubuntu20.04 AS hami-core-build
 
 ENV DEBIAN_FRONTEND=noninteractive
 RUN apt-get -y update; apt-get -y --no-install-recommends install cmake git && rm -rf /var/lib/apt/lists/*
 COPY . /k8s-dra-driver
-COPY .git/modules/lib/hami-core /hami-core-git
-RUN rm -rf /k8s-dra-driver/lib/hami-core/.git && echo "gitdir: /hami-core-git" > /k8s-dra-driver/lib/hami-core/.git
+# build.sh falls back gracefully without git. The parent .git goes too, or
+# hami-core's CMake walks up and stamps this repo's commit into libvgpu.so.
+RUN rm -rf /k8s-dra-driver/.git /k8s-dra-driver/lib/hami-core/.git
 WORKDIR /k8s-dra-driver/lib/hami-core
 RUN bash ./build.sh
 
@@ -34,17 +41,18 @@ RUN mv /k8s-dra-driver/lib/hami-core/build/libvgpu.so /k8s-dra-driver/lib/local/
 RUN mv /k8s-dra-driver/lib/nvidia/ld.so.preload /k8s-dra-driver/lib/local/lib/hami
 
 # Run build with binaries native to the current build platform.
-FROM --platform=$BUILDPLATFORM nvcr.io/nvidia/base/ubuntu:jammy-20251013 AS build
+FROM --platform=${BUILDPLATFORM} nvcr.io/nvidia/base/ubuntu:jammy-20251013 AS build
 
 # Require arg to be provided (set invalid default value).
 ARG GOLANG_VERSION=x.x.x
 
 # BUILDARCH, TARGETARCH (and others) are defined in the global scope by
-# BuiltKit. BUILDARCH is the architecture of the build platform. TARGETARCH is
+# BuildKit. BUILDARCH is the architecture of the build platform. TARGETARCH is
 # set via the --platform arg provided to the `docker buildx build ...` command.
 # Redefining those variables here without new values makes the outer-context
 # values available to in-stage RUN commands. Arch values are of the form
-# amd64/arm64.
+# amd64/arm64. A classic builder leaves them empty; the RUN commands below then
+# fall back to the build host's architecture.
 ARG BUILDARCH
 ARG TARGETARCH
 
@@ -60,8 +68,9 @@ RUN apt-get update && \
         gcc-x86-64-linux-gnu && \
         rm -rf /var/lib/apt/lists/* /var/cache/apt/archives
 
-RUN curl -sSfL --retry 8 --retry-all-errors --connect-timeout 10 --retry-delay 5 \
-        https://go.dev/dl/go${GOLANG_VERSION}.linux-${BUILDARCH}.tar.gz | tar -C /usr/local -xz
+RUN arch="${BUILDARCH:-$(uname -m | sed -e 's,aarch64,arm64,' -e 's,x86_64,amd64,')}" && \
+    curl -sSfL --retry 8 --retry-all-errors --connect-timeout 10 --retry-delay 5 \
+        https://go.dev/dl/go${GOLANG_VERSION}.linux-${arch}.tar.gz | tar -C /usr/local -xz
 
 ENV GOPATH=/go
 ENV PATH=$GOPATH/bin:/usr/local/go/bin:$PATH
@@ -83,12 +92,15 @@ RUN mkdir /artifacts
 # The VERSION and GIT_COMMIT env vars are consumed by the `make` target below.
 ARG VERSION="N/A"
 ARG GIT_COMMIT="unknown"
-RUN if [ "$TARGETARCH" = "amd64" ]; then \
-        cc=gcc; \
-    elif [ "$TARGETARCH" = "arm64" ]; then \
+RUN arch="${TARGETARCH:-$(uname -m | sed -e 's,aarch64,arm64,' -e 's,x86_64,amd64,')}" && \
+    if [ "$arch" = "amd64" ]; then \
+        cc=x86_64-linux-gnu-gcc; \
+    elif [ "$arch" = "arm64" ]; then \
         cc=aarch64-linux-gnu-gcc; \
+    else \
+        echo "unsupported architecture: $arch" >&2; exit 1; \
     fi && \
-    make CC=${cc} GOARCH=${TARGETARCH} PREFIX=/artifacts cmds
+    make CC=${cc} GOARCH=${arch} PREFIX=/artifacts cmds
 
 # Build static bash binary (against musl). Notes: cross-compilation isn't robust
 # (see non-deterministic segfaults tracked in issues/502; source code download
