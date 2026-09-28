@@ -6,8 +6,8 @@ metadata:
   name: hami-dra-driver-service-account-kubeletplugin
   namespace: default
   labels:
-    helm.sh/chart: hami-dra-driver-0.1.0
-    app.kubernetes.io/version: "v0.1.0"
+    helm.sh/chart: hami-dra-driver-0.1.1
+    app.kubernetes.io/version: "v0.1.1"
     app.kubernetes.io/managed-by: Helm
     app.kubernetes.io/name: hami-dra-driver
     app.kubernetes.io/instance: hami-dra-driver
@@ -18,8 +18,8 @@ kind: ClusterRole
 metadata:
   name: hami-dra-driver-clusterrole-kubeletplugin
   labels:
-    helm.sh/chart: hami-dra-driver-0.1.0
-    app.kubernetes.io/version: "v0.1.0"
+    helm.sh/chart: hami-dra-driver-0.1.1
+    app.kubernetes.io/version: "v0.1.1"
     app.kubernetes.io/managed-by: Helm
     app.kubernetes.io/name: hami-dra-driver
     app.kubernetes.io/instance: hami-dra-driver
@@ -43,8 +43,8 @@ kind: ClusterRoleBinding
 metadata:
   name: hami-dra-driver-clusterrole-binding-kubeletplugin
   labels:
-    helm.sh/chart: hami-dra-driver-0.1.0
-    app.kubernetes.io/version: "v0.1.0"
+    helm.sh/chart: hami-dra-driver-0.1.1
+    app.kubernetes.io/version: "v0.1.1"
     app.kubernetes.io/managed-by: Helm
     app.kubernetes.io/name: hami-dra-driver
     app.kubernetes.io/instance: hami-dra-driver
@@ -64,8 +64,8 @@ metadata:
   name: hami-dra-driver-role-kubeletplugin
   namespace: default
   labels:
-    helm.sh/chart: hami-dra-driver-0.1.0
-    app.kubernetes.io/version: "v0.1.0"
+    helm.sh/chart: hami-dra-driver-0.1.1
+    app.kubernetes.io/version: "v0.1.1"
     app.kubernetes.io/managed-by: Helm
     app.kubernetes.io/name: hami-dra-driver
     app.kubernetes.io/instance: hami-dra-driver
@@ -77,8 +77,8 @@ metadata:
   name: hami-dra-driver-role-binding-kubeletplugin
   namespace: default
   labels:
-    helm.sh/chart: hami-dra-driver-0.1.0
-    app.kubernetes.io/version: "v0.1.0"
+    helm.sh/chart: hami-dra-driver-0.1.1
+    app.kubernetes.io/version: "v0.1.1"
     app.kubernetes.io/managed-by: Helm
     app.kubernetes.io/name: hami-dra-driver
     app.kubernetes.io/instance: hami-dra-driver
@@ -98,8 +98,8 @@ metadata:
   name: hami-dra-driver-kubelet-plugin
   namespace: default
   labels:
-    helm.sh/chart: hami-dra-driver-0.1.0
-    app.kubernetes.io/version: "v0.1.0"
+    helm.sh/chart: hami-dra-driver-0.1.1
+    app.kubernetes.io/version: "v0.1.1"
     app.kubernetes.io/managed-by: Helm
     app.kubernetes.io/name: hami-dra-driver
     app.kubernetes.io/instance: hami-dra-driver
@@ -122,7 +122,7 @@ spec:
       serviceAccountName: hami-dra-driver-service-account
       initContainers:
       - name: init-container
-        image: "projecthami/k8s-dra-driver:v0.1.0"
+        image: "projecthami/k8s-dra-driver:v0.1.1"
         imagePullPolicy: IfNotPresent
         securityContext:
           privileged: true
@@ -142,7 +142,7 @@ spec:
           readOnly: true
       containers:
       - name: gpus
-        image: "projecthami/k8s-dra-driver:v0.1.0"
+        image: "projecthami/k8s-dra-driver:v0.1.1"
         imagePullPolicy: IfNotPresent
         securityContext:
           privileged: true
@@ -199,7 +199,7 @@ spec:
             fieldRef:
               fieldPath: metadata.namespace
         - name: IMAGE_NAME
-          value: "projecthami/k8s-dra-driver:v0.1.0"
+          value: "projecthami/k8s-dra-driver:v0.1.1"
         - name: KUBELET_REGISTRAR_DIRECTORY_PATH
           value: "/var/lib/kubelet/plugins_registry"
         - name: KUBELET_PLUGINS_DIRECTORY_PATH
@@ -257,8 +257,8 @@ kind: DeviceClass
 metadata:
   name: hami-core-gpu.projet-hami.io
   labels:
-    helm.sh/chart: hami-dra-driver-0.1.0
-    app.kubernetes.io/version: "v0.1.0"
+    helm.sh/chart: hami-dra-driver-0.1.1
+    app.kubernetes.io/version: "v0.1.1"
     app.kubernetes.io/managed-by: Helm
     app.kubernetes.io/name: hami-dra-driver
     app.kubernetes.io/instance: hami-dra-driver

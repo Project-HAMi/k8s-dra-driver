@@ -45,7 +45,7 @@ kubectl version --client
 helm version
 
 # 6. Driver image exists locally
-docker images --filter reference=projecthami/k8s-dra-driver:v0.1.0 -q | grep -q . \
+docker images --filter reference=projecthami/k8s-dra-driver:v0.1.1 -q | grep -q . \
   && echo "[OK] driver image found"
 
 # 7. Test image exists locally (kind clusters may not have internet)
@@ -66,7 +66,7 @@ All variables are sourced from `demo/clusters/kind/scripts/common.sh` and can be
 |---|---|---|
 | `KIND_K8S_TAG` | `v1.34.0` | Kubernetes version (must be ≥ 1.34 for Consumable Capacity) |
 | `KIND_CLUSTER_NAME` | `k8s-dra-driver-cluster` | Name of the kind cluster |
-| `DRIVER_IMAGE` | `projecthami/k8s-dra-driver:v0.1.0` | Driver image to load into nodes |
+| `DRIVER_IMAGE` | `projecthami/k8s-dra-driver:v0.1.1` | Driver image to load into nodes |
 | `KIND_CLUSTER_CONFIG_PATH` | `demo/clusters/kind/scripts/kind-cluster-config.yaml` | kind cluster config file |
 
 **Override example:**
@@ -84,7 +84,7 @@ make image
 
 # Verify
 docker images | grep k8s-dra-driver
-# Expected: projecthami/k8s-dra-driver   v0.1.0   ...
+# Expected: projecthami/k8s-dra-driver   v0.1.1   ...
 ```
 
 > Skip this stage if you already have the image pulled from a registry. The cluster creation script will auto-load it.

@@ -202,7 +202,7 @@ This section details how the agents are packaged and delivered.
 
 | Variable | Value | Purpose |
 |---|---|---|
-| `VERSION` | `v0.1.0` | HAMi DRA driver release version. |
+| `VERSION` | `v0.1.1` | HAMi DRA driver release version. |
 | `NVVERSION` | `25.12.0` | Upstream `k8s-dra-driver-gpu` version this project is based on. |
 | `REGISTRY` | `projecthami` | Default container registry. |
 | `GOLANG_VERSION` | (from `hack/golang-version.sh`) | Go compiler version for the build stage. |
@@ -242,7 +242,7 @@ The project also provides a Helm chart under `chart/hami-dra-driver/` for cluste
 helm install hami-dra-driver ./chart/hami-dra-driver \
   --namespace hami-system --create-namespace \
   --set image.repository=projecthami/hami-kubelet-plugin \
-  --set image.tag=v0.1.0
+  --set image.tag=v0.1.1
 ```
 
 Key templates:

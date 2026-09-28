@@ -18,7 +18,7 @@ MODULE := github.com/Project-HAMi/$(DRIVER_NAME)
 
 REGISTRY ?= projecthami
 
-VERSION  ?= v0.1.0
+VERSION  ?= v0.1.1
 
 # vVERSION represents the version with a guaranteed v-prefix
 # Note: this is probably not consumed in our build chain.

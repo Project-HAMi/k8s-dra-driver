@@ -18,7 +18,7 @@ spec:
     spec:
       initContainers:
       - name: init-container
-        image: projecthami/k8s-dra-driver:v0.1.0
+        image: projecthami/k8s-dra-driver:v0.1.1
         securityContext:
           privileged: true
         command: [bash, /usr/bin/kubelet-plugin-prestart.sh]
@@ -77,12 +77,12 @@ spec:
         - name: KUBELET_PLUGINS_DIRECTORY_PATH
           value: /var/lib/kubelet/plugins
         - name: IMAGE_NAME
-          value: projecthami/k8s-dra-driver:v0.1.0
+          value: projecthami/k8s-dra-driver:v0.1.1
         lifecycle:
           postStart:
             exec:
               command: ["/bin/bash", "-c", "/usr/bin/vgpu-init.sh /usr/local/vgpu/"]
-        image: projecthami/k8s-dra-driver:v0.1.0
+        image: projecthami/k8s-dra-driver:v0.1.1
         imagePullPolicy: IfNotPresent
         name: gpus
         securityContext:
