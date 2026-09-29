@@ -37,6 +37,7 @@ import (
 	configapi "github.com/NVIDIA/k8s-dra-driver-gpu/api/nvidia.com/resource/v1beta1"
 	// "github.com/NVIDIA/k8s-dra-driver-gpu/pkg/featuregates"
 	"github.com/NVIDIA/k8s-dra-driver-gpu/pkg/flock"
+	"github.com/Project-HAMi/k8s-dra-driver/pkg/bootid"
 	"github.com/Project-HAMi/k8s-dra-driver/pkg/featuregates"
 )
 
@@ -169,22 +170,52 @@ func NewDeviceState(ctx context.Context, config *Config) (*DeviceState, error) {
 	}
 	state.checkpointCleanupManager = NewCheckpointCleanupManager(state, config.clientsets.Resource)
 
-	checkpoints, err := state.checkpointManager.ListCheckpoints()
+	currentBootID, err := bootid.GetCurrentBootID()
 	if err != nil {
-		return nil, fmt.Errorf("unable to list checkpoints: %v", err)
+		return nil, fmt.Errorf("read node boot id: %w", err)
 	}
 
-	for _, c := range checkpoints {
-		if c == DriverPluginCheckpointFileBasename {
-			return state, nil
-		}
-	}
-
-	if err := state.createCheckpoint(ctx, &Checkpoint{}); err != nil {
-		return nil, fmt.Errorf("unable to create fresh checkpoint: %v", err)
+	if err := state.initCheckpoint(ctx, currentBootID); err != nil {
+		return nil, err
 	}
 
 	return state, nil
+}
+
+// initCheckpoint keeps the existing checkpoint only if it was written during
+// the current boot. CDI specs and device configuration do not survive a node
+// reboot, so claims prepared before a reboot must be prepared again.
+func (s *DeviceState) initCheckpoint(ctx context.Context, currentBootID string) error {
+	checkpoints, err := s.checkpointManager.ListCheckpoints()
+	if err != nil {
+		return fmt.Errorf("unable to list checkpoints: %w", err)
+	}
+
+	if slices.Contains(checkpoints, DriverPluginCheckpointFileBasename) {
+		cp, err := s.getCheckpoint(ctx)
+		if err != nil {
+			return fmt.Errorf("unable to get checkpoint: %w", err)
+		}
+		switch storedBootID := cp.GetNodeBootID(); storedBootID {
+		case currentBootID:
+			return nil
+		case "":
+			klog.V(4).Info("The existing checkpoint file does not contain a boot ID, injecting current boot ID")
+			if err := s.updateCheckpoint(ctx, func(cp *Checkpoint) {
+				cp.V2.NodeBootID = currentBootID
+			}); err != nil {
+				return fmt.Errorf("unable to update checkpoint: %w", err)
+			}
+			return nil
+		default:
+			klog.Infof("Invalidating checkpoint: checkpoint nodeBootID %q != current %q", storedBootID, currentBootID)
+		}
+	}
+
+	if err := s.createCheckpoint(ctx, &Checkpoint{V2: &CheckpointV2{NodeBootID: currentBootID}}); err != nil {
+		return fmt.Errorf("unable to create fresh checkpoint: %w", err)
+	}
+	return nil
 }
 
 func (s *DeviceState) Prepare(ctx context.Context, claim *resourceapi.ResourceClaim) ([]kubeletplugin.Device, error) {
@@ -209,9 +240,6 @@ func (s *DeviceState) Prepare(ctx context.Context, claim *resourceapi.ResourceCl
 	// unprepare noop: claim preparation started but not completed).
 	preparedClaim, exists := cp.V2.PreparedClaims[claimUID]
 	if exists && preparedClaim.CheckpointState == ClaimCheckpointStatePrepareCompleted {
-		if featuregates.Enabled(featuregates.HAMiCoreSupport) {
-			return nil, fmt.Errorf("claims in PrepareCompleted state are not supported when HAMiCoreSupport enabled")
-		}
 		// Make this a noop. Associated device(s) has/ave been prepared by us.
 		// Prepare() must be idempotent, as it may be invoked more than once per
 		// claim (and actual device preparation must happen at most once).
