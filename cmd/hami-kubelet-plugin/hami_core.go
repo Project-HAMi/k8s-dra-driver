@@ -20,6 +20,7 @@ import (
 	"fmt"
 	"maps"
 	"os"
+	"path/filepath"
 	"slices"
 	"strconv"
 
@@ -168,16 +169,33 @@ func (g *PreparedDeviceGroup) HAMIGpuUUIDs() []string {
 	return g.Devices.HAMiGpus().UUIDs()
 }
 
+// hookPath is the hook tree as addressed inside containers: inside this
+// plugin's own container, where the tree is mounted and written to, and inside
+// the workload containers, where the CDI mounts land. The baked-in
+// ld.so.preload refers to it as well, so it is not configurable.
+const hookPath = "/usr/local"
+
+// hostHookPathEnvVar overrides the host-side location of the hook tree for
+// hosts whose /usr/local is not writable. The volume backing it must still be
+// mounted at hookPath in this plugin's container.
+const hostHookPathEnvVar = "HAMI_HOST_HOOK_PATH"
+
 // For sharing.go
 type HAMiCoreManager struct {
+	// hostHookPath addresses the same tree as hookPath, but as seen from the
+	// host: CDI mount sources are resolved in the host mount namespace.
 	hostHookPath string
 	nvdevlib     *deviceLib
 }
 
 func NewHAMiCoreManager(deviceLib *deviceLib) *HAMiCoreManager {
+	hostHookPath := hookPath
+	if v := os.Getenv(hostHookPathEnvVar); v != "" {
+		hostHookPath = filepath.Clean(v)
+	}
 	return &HAMiCoreManager{
 		nvdevlib:     deviceLib,
-		hostHookPath: "/usr/local",
+		hostHookPath: hostHookPath,
 	}
 }
 
@@ -194,25 +212,26 @@ func (m *HAMiCoreManager) getConsumableCapacityMap(claim *resourceapi.ResourceCl
 }
 
 func (m *HAMiCoreManager) GetCDIContainerEdits(claim *resourceapi.ResourceClaim, devs AllocatableDevices) *cdiapi.ContainerEdits {
-	cacheFileHostDirectory := fmt.Sprintf("%s/vgpu/claims/%s", m.hostHookPath, claim.UID)
+	cacheFileDirectory := fmt.Sprintf("%s/vgpu/claims/%s", hookPath, claim.UID)
+	cacheFileHostDirectory := filepath.Join(m.hostHookPath, "vgpu", "claims", string(claim.UID))
 	// TODO: We should check the status of claim, becasue there may be two pod share the claim
 	var err error
-	err = os.RemoveAll(cacheFileHostDirectory)
+	err = os.RemoveAll(cacheFileDirectory)
 	if err != nil {
-		klog.Warningf("Failed to remove host directory for cachefile %s: %s", cacheFileHostDirectory, err)
+		klog.Warningf("Failed to remove host directory for cachefile %s: %s", cacheFileDirectory, err)
 	}
-	err = os.MkdirAll(cacheFileHostDirectory, 0777)
+	err = os.MkdirAll(cacheFileDirectory, 0777)
 	if err != nil {
-		klog.Warningf("Failed to create host directory for cachefile %s: %s", cacheFileHostDirectory, err)
+		klog.Warningf("Failed to create host directory for cachefile %s: %s", cacheFileDirectory, err)
 	}
-	err = os.Chmod(cacheFileHostDirectory, 0777)
+	err = os.Chmod(cacheFileDirectory, 0777)
 	if err != nil {
-		klog.Warningf("Failed to change mod of host directory for cachefile %s: %s", cacheFileHostDirectory, err)
+		klog.Warningf("Failed to change mod of host directory for cachefile %s: %s", cacheFileDirectory, err)
 	}
 
 	hamiEnvs := []string{}
 	// TOOD: Get SM Limit from Claim's Annotation
-	hamiEnvs = append(hamiEnvs, fmt.Sprintf("CUDA_DEVICE_MEMORY_SHARED_CACHE=%s", fmt.Sprintf("%s/%v.cache", cacheFileHostDirectory, uuid.New().String())))
+	hamiEnvs = append(hamiEnvs, fmt.Sprintf("CUDA_DEVICE_MEMORY_SHARED_CACHE=%s", fmt.Sprintf("%s/%v.cache", cacheFileDirectory, uuid.New().String())))
 
 	devCapMap := m.getConsumableCapacityMap(claim)
 	idx := 0
@@ -250,19 +269,19 @@ func (m *HAMiCoreManager) GetCDIContainerEdits(claim *resourceapi.ResourceClaim,
 			Env: hamiEnvs,
 			Mounts: []*cdispec.Mount{
 				{
-					ContainerPath: cacheFileHostDirectory,
+					ContainerPath: cacheFileDirectory,
 					HostPath:      cacheFileHostDirectory,
 					Options:       []string{"rw", "nosuid", "nodev", "bind"},
 				},
 				{
-					ContainerPath: m.hostHookPath + "/vgpu/libvgpu.so",
-					HostPath:      m.hostHookPath + "/vgpu/libvgpu.so",
+					ContainerPath: hookPath + "/vgpu/libvgpu.so",
+					HostPath:      filepath.Join(m.hostHookPath, "vgpu", "libvgpu.so"),
 					Options:       []string{"ro", "nosuid", "nodev", "bind"},
 				},
 				// TODO: Check CUDA_DISABLE_CONTROL env before mount ld.so.preload
 				{
 					ContainerPath: "/etc/ld.so.preload",
-					HostPath:      m.hostHookPath + "/vgpu/ld.so.preload",
+					HostPath:      filepath.Join(m.hostHookPath, "vgpu", "ld.so.preload"),
 					Options:       []string{"ro", "nosuid", "nodev", "bind"},
 				},
 				{
@@ -276,7 +295,7 @@ func (m *HAMiCoreManager) GetCDIContainerEdits(claim *resourceapi.ResourceClaim,
 }
 
 func (m *HAMiCoreManager) Unprepare(claimUID string, pl PreparedDeviceList) error {
-	path := fmt.Sprintf("%s/vgpu/claims/%s", m.hostHookPath, claimUID)
+	path := fmt.Sprintf("%s/vgpu/claims/%s", hookPath, claimUID)
 	_ = os.RemoveAll(path)
 	return nil
 }

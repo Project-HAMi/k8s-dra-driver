@@ -252,8 +252,8 @@ kubectl -n test-dra get resourceclaim single-gpu-0 \
 | ResourceSlice `DRIVER` is `gpu.nvidia.com` not `hami-core-gpu.project-hami.io` | `HAMiCoreSupport` feature gate disabled | Check driver logs for `Using driver name:` line; reinstall with `--set featureGates.HAMiCoreSupport=true` |
 | Pod status `ImagePullBackOff` for `ubuntu:24.04` | kind worker node can't reach Docker Hub | Pre-load: `kind load docker-image --name k8s-dra-driver-cluster ubuntu:24.04` |
 | Pod status `ErrImagePull` / `DeadlineExceeded` | No outbound internet from kind nodes | Ensure both driver image and `ubuntu:24.04` are loaded into kind before creating pods |
-| `CUDA_DEVICE_SM_LIMIT` not in pod env | `libvgpu.so` not mounted — init script failed | `kubectl -n hami-dra-driver describe pod <driver-pod>` — check postStart events and hostPath `/usr/local/vgpu` |
-| `nvidia-smi` shows full GPU memory (not capped) | `ld.so.preload` not injected or wrong `VGPU_INIT_PATH` | Verify `.Values.driver.vgpuInitPath` mount and `libvgpu.so` exists at that path on the node |
+| `CUDA_DEVICE_SM_LIMIT` not in pod env | `libvgpu.so` not mounted — init script failed | `kubectl -n hami-dra-driver describe pod <driver-pod>` — check postStart events and that `<hostHookPath>/vgpu` on the node (mounted at `/usr/local/vgpu` in the driver pod) contains `libvgpu.so` |
+| `nvidia-smi` shows full GPU memory (not capped) | `ld.so.preload` not injected or wrong `HAMI_HOST_HOOK_PATH` | Verify `.Values.driver.hostHookPath` and that `libvgpu.so` exists at `<hostHookPath>/vgpu/` on the node |
 | kind cluster creation fails on `kindest/node` image pull | `KIND_K8S_TAG` image not available locally | Check https://hub.docker.com/r/kindest/node/tags and set a valid tag |
 | GPU not visible inside kind worker node | `accept-nvidia-visible-devices-as-volume-mounts` not set | Re-run prerequisite fix #3 and restart docker |
 
