@@ -1,12 +1,3 @@
----
-name: Pull Request
-about: Propose a change to the codebase
-title: ''
-labels: ''
-assignees: ''
-
----
-
 **Description**
 Please include a summary of the change and which issue is fixed. Please also include relevant motivation and context. List any dependencies that are required for this change.
 
@@ -29,6 +20,16 @@ Please describe the tests that you ran to verify your changes. Provide instructi
 
 - [ ] Test A
 - [ ] Test B
+
+**AI Assistance Disclosure**
+Select one option and describe any AI assistance, following the [HAMi AI Assistance Notice](https://github.com/Project-HAMi/HAMi/blob/master/CONTRIBUTING.md#ai-assistance-notice). Trivial completion of single keywords or short phrases does not require disclosure.
+
+- [ ] No AI assistance was used beyond trivial completion.
+- [ ] AI assistance was used (complete the details below).
+
+Tools used and extent of assistance (e.g., understanding the codebase, documentation, code generation, tests, or PR responses):
+<!-- Describe the tools used and which parts of the contribution they assisted with. -->
+You are responsible for understanding and verifying AI-assisted work. Disclose AI-assisted PR responses, critically review and edit them, and address the reviewer's specific feedback; do not paste AI output verbatim. Keep disclosure in the PR description rather than commit trailers.
 
 **Checklist:**
 - [ ] My code follows the style guidelines of this project

@@ -1,5 +1,5 @@
 blank_issues_enabled: false
 contact_links:
   - name: Ask a question
-    url: https://github.com/kubernetes-sigs/dra-driver-test-stub/discussions
+    url: https://github.com/Project-HAMi/k8s-dra-driver/issues/new
     about: Ask a question about the project or how to use it.
