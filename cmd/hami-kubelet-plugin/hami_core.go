@@ -191,7 +191,9 @@ const hostHookPathEnvVar = "HAMI_HOST_HOOK_PATH"
 type HAMiCoreManager struct {
 	// hostHookPath addresses the same tree as hookPath, but as seen from the
 	// host: CDI mount sources are resolved in the host mount namespace.
-	hostHookPath      string
+	hostHookPath string
+	// containerHookPath is fixed to hookPath in production. Tests use a
+	// temporary tree to exercise cache operations without writing to /usr/local.
 	containerHookPath string
 	nvdevlib          *deviceLib
 	nodeName          string

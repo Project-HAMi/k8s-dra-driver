@@ -87,7 +87,8 @@ This section defines the architectural agents within the project for SDD.
 *   **Responsibilities:**
     *   Wraps a physical `GpuInfo` into a `HAMiGpuInfo` device (`wrapHAMiCoreGpu`), which exposes `cores` and `memory` as partitionable `CapacityRequestPolicy` fields with step/min/max constraints.
     *   Implements `GetCDIContainerEdits` to produce `CDI ContainerEdits` for a prepared claim:
-        *   Creates a per-claim cache directory under `/usr/local/vgpu/claims/<claimUID>/` (in-container path).
+        *   Resolves direct and template-generated ResourceClaims to Pod-local aliases and validates the reserving Pod UID.
+        *   Creates `/usr/local/vgpu/containers/<podUID>_<containerName>/<claimUID>.cache` (in-container path), with host CDI sources under `<hostHookPath>/vgpu/containers/`.
         *   Mounts `<hostHookPath>/vgpu/libvgpu.so` on the host to `/usr/local/vgpu/libvgpu.so` in the container, and `<hostHookPath>/vgpu/ld.so.preload` to `/etc/ld.so.preload` (both read-only).
         *   `hostHookPath` defaults to `/usr/local` and can be overridden via `HAMI_HOST_HOOK_PATH` (Helm: `driver.hostHookPath`); the in-container path is fixed because the baked-in `ld.so.preload` refers to it.
         *   Mounts the claim cache directory and `/tmp/vgpulock` as read-write bind mounts.
