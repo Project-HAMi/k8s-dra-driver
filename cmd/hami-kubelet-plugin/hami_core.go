@@ -250,6 +250,36 @@ func (m *HAMiCoreManager) getConsumableCapacityMap(claim *resourceapi.ResourceCl
 	return resMap
 }
 
+func podClaimAliasForResourceClaim(pod *corev1.Pod, resourceClaimName string) (string, error) {
+	for _, podClaim := range pod.Spec.ResourceClaims {
+		if podClaim.ResourceClaimName != nil && *podClaim.ResourceClaimName == resourceClaimName {
+			return podClaim.Name, nil
+		}
+
+		if podClaim.ResourceClaimTemplateName == nil {
+			continue
+		}
+		for _, claimStatus := range pod.Status.ResourceClaimStatuses {
+			if claimStatus.Name == podClaim.Name && claimStatus.ResourceClaimName != nil && *claimStatus.ResourceClaimName == resourceClaimName {
+				return podClaim.Name, nil
+			}
+		}
+	}
+
+	return "", fmt.Errorf("pod %s/%s does not reference ResourceClaim %s", pod.Namespace, pod.Name, resourceClaimName)
+}
+
+func containerNameForPodClaimAlias(containers []corev1.Container, claimAlias string) string {
+	for _, container := range containers {
+		for _, claim := range container.Resources.Claims {
+			if claim.Name == claimAlias {
+				return container.Name
+			}
+		}
+	}
+	return ""
+}
+
 // resolveClaimToPod searches the local Pod informer cache for the Pod that
 // reserved the given claim.  HAMi DRA guarantees a 1:1 claim-to-container
 // binding, so it also returns the exact container name.
@@ -271,36 +301,23 @@ func (m *HAMiCoreManager) resolveClaimToPod(claim *resourceapi.ResourceClaim) (*
 	if err != nil {
 		return nil, "", fmt.Errorf("pod %s/%s not found in local cache: %w", claim.Namespace, consumer.Name, err)
 	}
+	if pod.UID != consumer.UID {
+		return nil, "", fmt.Errorf("pod %s/%s UID %s does not match claim consumer UID %s", claim.Namespace, consumer.Name, pod.UID, consumer.UID)
+	}
 
-	// HAMi DRA design guarantees one claim per container, but we defensively
-	// iterate over all containers and init containers.
-	var containerName string
-	for _, c := range pod.Spec.Containers {
-		for _, rc := range c.Resources.Claims {
-			if rc.Name == claim.Name {
-				containerName = c.Name
-				break
-			}
-		}
-		if containerName != "" {
-			break
-		}
+	claimAlias, err := podClaimAliasForResourceClaim(pod, claim.Name)
+	if err != nil {
+		return nil, "", err
+	}
+
+	// HAMi DRA design guarantees one claim per container, but check both
+	// regular and init containers to resolve the exact consumer.
+	containerName := containerNameForPodClaimAlias(pod.Spec.Containers, claimAlias)
+	if containerName == "" {
+		containerName = containerNameForPodClaimAlias(pod.Spec.InitContainers, claimAlias)
 	}
 	if containerName == "" {
-		for _, c := range pod.Spec.InitContainers {
-			for _, rc := range c.Resources.Claims {
-				if rc.Name == claim.Name {
-					containerName = c.Name
-					break
-				}
-			}
-			if containerName != "" {
-				break
-			}
-		}
-	}
-	if containerName == "" {
-		return nil, "", fmt.Errorf("no container in pod %s/%s references claim %s", claim.Namespace, pod.Name, claim.Name)
+		return nil, "", fmt.Errorf("no container in pod %s/%s references PodResourceClaim %s for ResourceClaim %s", claim.Namespace, pod.Name, claimAlias, claim.Name)
 	}
 
 	return pod, containerName, nil
