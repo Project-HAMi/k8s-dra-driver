@@ -69,8 +69,10 @@ This section defines the architectural agents within the project for SDD.
     *   Implements **transactional checkpoint management**:
         *   Two-phase checkpoint states: `PrepareStarted` → `PrepareCompleted`.
         *   Checkpoint reads and writes are serialized under a dedicated file-based lock (`cp.lock`, 10 s timeout) via `updateCheckpoint`.
-    *   Performs **overlap validation** (`validateNoOverlappingPreparedDevices`) to prevent double-allocation of the same device across different claims (admin-access allocations are exempt) — **skipped when `HAMiCoreSupport` is enabled** because the HAMi-Core injection model does not allow idempotent re-prepare of completed claims.
-    *   **HAMiCore-specific prepare behavior:** When `HAMiCoreSupport` is enabled, claims in `PrepareCompleted` state are rejected on re-prepare (non-idempotent); partial prepare rollback is also skipped.
+        *   The checkpoint records the node boot ID (`NodeBootID`, read via `pkg/bootid`). At startup, `initCheckpoint` discards a checkpoint written during a previous boot, so claims are fully re-prepared after a node reboot. A legacy checkpoint without a boot ID is kept and stamped with the current one.
+    *   Performs **overlap validation** (`validateNoOverlappingPreparedDevices`) to prevent double-allocation of the same device across different claims (admin-access allocations are exempt) — **skipped when `HAMiCoreSupport` is enabled** because HAMi-Core devices are shared across claims.
+    *   **Idempotent prepare:** a claim in `PrepareCompleted` state returns its checkpointed devices without re-preparing (also when `HAMiCoreSupport` is enabled).
+    *   **HAMiCore-specific prepare behavior:** When `HAMiCoreSupport` is enabled, partial prepare rollback is skipped.
     *   Manages sub-managers, each activated by a feature gate:
         *   `HAMiCoreManager` — HAMi-Core GPU virtualization (`featuregates.HAMiCoreSupport`).
         *   `TimeSlicingManager` — CUDA time-slicing (`featuregates.TimeSlicingSettings`).
