@@ -360,7 +360,7 @@ func TestGetCDIContainerEditsCachePath(t *testing.T) {
 		},
 	}
 	manager := managerWithPods(t, pod)
-	manager.hostHookPath = hostHookPath
+	manager.hostHookPath = "/var/lib/hami"
 	manager.containerHookPath = hostHookPath
 	claim := newResourceClaim("gpu-claim", []resourceapi.ResourceClaimConsumerReference{{
 		Resource: "pods",
@@ -407,13 +407,17 @@ func TestGetCDIContainerEditsCachePath(t *testing.T) {
 	if len(edits.Mounts) != 4 {
 		t.Fatalf("GetCDIContainerEdits() mounts = %d, want 4", len(edits.Mounts))
 	}
-	if edits.Mounts[0].HostPath != wantDirectory || edits.Mounts[0].ContainerPath != wantDirectory {
-		t.Errorf("cache mount = %#v, want host and container path %q", edits.Mounts[0], wantDirectory)
+	wantHostDirectory := filepath.Join(manager.hostHookPath, "vgpu", "containers", "pod-uid_workload")
+	if edits.Mounts[0].HostPath != wantHostDirectory || edits.Mounts[0].ContainerPath != wantDirectory {
+		t.Errorf("cache mount = %#v, want host path %q and container path %q", edits.Mounts[0], wantHostDirectory, wantDirectory)
 	}
-	if edits.Mounts[1].HostPath != filepath.Join(hostHookPath, "vgpu", "libvgpu.so") {
+	if edits.Mounts[1].ContainerPath != filepath.Join(hookPath, "vgpu", "libvgpu.so") {
+		t.Errorf("libvgpu container path = %q, want fixed preload path", edits.Mounts[1].ContainerPath)
+	}
+	if edits.Mounts[1].HostPath != filepath.Join(manager.hostHookPath, "vgpu", "libvgpu.so") {
 		t.Errorf("libvgpu mount host path = %q", edits.Mounts[1].HostPath)
 	}
-	if edits.Mounts[2].HostPath != filepath.Join(hostHookPath, "vgpu", "ld.so.preload") {
+	if edits.Mounts[2].HostPath != filepath.Join(manager.hostHookPath, "vgpu", "ld.so.preload") {
 		t.Errorf("ld.so.preload mount host path = %q", edits.Mounts[2].HostPath)
 	}
 	info, err := os.Stat(wantDirectory)

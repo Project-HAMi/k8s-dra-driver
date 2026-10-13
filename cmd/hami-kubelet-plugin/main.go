@@ -124,7 +124,7 @@ func newApp() *cli.App {
 		&cli.StringFlag{
 			Name:        "host-hook-path",
 			Value:       "/usr/local",
-			Usage:       "the host path where vGPU hooks and claim caches are rooted (the container must have this path mounted)",
+			Usage:       "the host path where vGPU hooks and claim caches are rooted (mount its vgpu directory at /usr/local/vgpu in the plugin)",
 			Destination: &flags.hostHookPath,
 			EnvVars:     []string{hostHookPathEnvVar},
 		},
