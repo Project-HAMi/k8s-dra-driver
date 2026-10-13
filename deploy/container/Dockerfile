@@ -168,7 +168,7 @@ USER root:root
 
 # Smoke-test executables (provide early build feedback).
 RUN ["/usr/bin/hami-kubelet-plugin", "--version"]
-RUN ["/usr/bin/vGPUmonitor", "--version"]
+RUN ["/usr/bin/vGPUmonitor", "version"]
 RUN ["/bin/bash", "--version"]
 
 ENTRYPOINT ["/bin/bash"]
