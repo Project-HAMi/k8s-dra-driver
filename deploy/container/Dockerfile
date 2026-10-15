@@ -17,9 +17,8 @@
 # limitations under the License.
 
 ARG TOOLKIT_CONTAINER_IMAGE=unknown
-ARG HAMI_VGPUMONITOR_IMAGE=projecthami/hami:v2.9.0
-
-FROM ${HAMI_VGPUMONITOR_IMAGE} AS vgpumonitor
+ARG HAMI_VGPUMONITOR_SOURCE=source
+ARG HAMI_VGPUMONITOR_IMAGE=scratch
 
 # Declared without a default so BuildKit keeps filling it in, while a classic
 # builder can supply it with `--build-arg BUILDPLATFORM=linux/<arch>`. A default
@@ -66,6 +65,7 @@ RUN apt-get update && \
         curl \
         time \
         make \
+        git \
         gcc \
         gcc-aarch64-linux-gnu \
         gcc-x86-64-linux-gnu && \
@@ -104,6 +104,32 @@ RUN arch="${TARGETARCH:-$(uname -m | sed -e 's,aarch64,arm64,' -e 's,x86_64,amd6
         echo "unsupported architecture: $arch" >&2; exit 1; \
     fi && \
     make CC=${cc} GOARCH=${arch} PREFIX=/artifacts cmds
+
+# Build only the monitor, not HAMi's scheduler, image or HAMi-Core submodule.
+# BuildKit tracks the remote Git ref, so a moving master is refreshed even when
+# the downstream source has not changed. Pin REF to a commit for repeatability.
+FROM build AS vgpumonitor-source
+ARG HAMI_VGPUMONITOR_REF=master
+ARG TARGETARCH
+ADD --keep-git-dir=true https://github.com/Project-HAMi/HAMi.git#${HAMI_VGPUMONITOR_REF} /monitor-src
+WORKDIR /monitor-src
+# Go's automatic toolchain selection honors the upstream go.mod independently
+# of this driver's older Go requirement. CGO uses the target cross-compiler.
+RUN arch="${TARGETARCH:-$(uname -m | sed -e 's,aarch64,arm64,' -e 's,x86_64,amd64,')}" && \
+    case "$arch" in \
+        amd64) cc=x86_64-linux-gnu-gcc ;; \
+        arm64) cc=aarch64-linux-gnu-gcc ;; \
+        *) echo "unsupported monitor architecture: $arch" >&2; exit 1 ;; \
+    esac && \
+    revision="$(git rev-parse HEAD)" && echo "Building vGPUmonitor from HAMi ${revision}" && \
+    mkdir -p /k8s-vgpu/bin && \
+    CGO_ENABLED=1 GOOS=linux GOARCH=${arch} CC=${cc} GOTOOLCHAIN=auto \
+    go build -trimpath -ldflags "-s -w -X github.com/Project-HAMi/HAMi/pkg/version.revision=${revision}" \
+        -o /k8s-vgpu/bin/vGPUmonitor ./cmd/vGPUmonitor
+
+# Future release-image extraction avoids compiling the upstream source.
+FROM ${HAMI_VGPUMONITOR_IMAGE} AS vgpumonitor-image
+FROM vgpumonitor-${HAMI_VGPUMONITOR_SOURCE} AS vgpumonitor
 
 # Build static bash binary (against musl). Notes: cross-compilation isn't robust
 # (see non-deterministic segfaults tracked in issues/502; source code download
