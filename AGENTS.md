@@ -4,6 +4,8 @@ This document outlines the operational principles for AI-assisted development an
 
 > **Spec Version:** `5f92650` — This document reflects the codebase as of commit `5f92650`.
 
+Read [AGENTS.local.md](AGENTS.local.md) alongside this document for local workflow preferences, remote GPU test procedures, and retained test-environment instructions. Remote E2E requires explicit user authorization.
+
 ---
 
 ## Part 1: AI Assistant Operational Framework
