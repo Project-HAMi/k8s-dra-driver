@@ -50,6 +50,21 @@ spec:
 
 Please refer to the [demo.md](demo/demo.md) for more information.
 
+## vGPUMonitor compatibility
+
+HAMi-Core preparation adds `hami.io/vgpu-node=<nodeName>` to the reserving Pod
+so that upstream vGPUMonitor can discover it through its legacy metric selector.
+This applies even when the optional monitor sidecar is disabled. The Helm chart
+grants Pod `patch` permission in addition to `get/list/watch`; externally managed
+RBAC must grant the same permissions before upgrading the driver.
+
+Only that label is patched, with Pod UID and resource-version guards. An
+existing matching label is accepted; a conflicting label, wrong-node Pod, or
+API error fails preparation before cache edits for a resolved Pod. The label
+is retained until Pod deletion because other claims or containers may still
+need it. This is legacy-monitor compatibility, not label-independent DRA
+support. The monitor still requires NVIDIA runtime library injection.
+
 ## Contributing
 
 Contributions require a Developer Certificate of Origin (DCO, see [CONTRIBUTING.md](https://github.com/Project-HAMi/HAMi/blob/master/CONTRIBUTING.md).

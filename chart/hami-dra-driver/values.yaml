@@ -61,6 +61,8 @@ serviceAccount:
   name: ""
 
 # HAMi-specific host paths
+# HAMiCoreSupport preparation labels reserving Pods with hami.io/vgpu-node.
+# If managing RBAC externally, grant the driver get/list/watch/patch on Pods.
 driver:
   cdiRoot: /var/run/cdi
   hostHookPath: /usr/local

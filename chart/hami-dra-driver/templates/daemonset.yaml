@@ -199,8 +199,6 @@ spec:
               fieldPath: spec.nodeName
         - name: HOOK_PATH
           value: "/usr/local/vgpu"
-        - name: DRA_MODE
-          value: "true"
         {{- with .Values.monitor.resources }}
         resources:
           {{- toYaml . | nindent 10 }}

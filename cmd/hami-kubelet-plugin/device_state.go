@@ -973,7 +973,11 @@ func (s *DeviceState) applySharingConfig(ctx context.Context, config configapi.S
 	var configState DeviceConfigState
 
 	if featuregates.Enabled(featuregates.HAMiCoreSupport) {
-		configState.containerEdits = s.hamiCoreManager.GetCDIContainerEdits(claim, requestedDevices)
+		var err error
+		configState.containerEdits, err = s.hamiCoreManager.GetCDIContainerEdits(ctx, claim, requestedDevices)
+		if err != nil {
+			return nil, fmt.Errorf("error configuring HAMi-Core claim %s: %w", claim.UID, err)
+		}
 	}
 
 	// Apply time-slicing settings (if available and feature gate enabled).

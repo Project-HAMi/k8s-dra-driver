@@ -17,22 +17,182 @@ limitations under the License.
 package main
 
 import (
+	"context"
+	"encoding/json"
+	"errors"
 	"os"
 	"path/filepath"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/stretchr/testify/require"
 
 	corev1 "k8s.io/api/core/v1"
 	resourceapi "k8s.io/api/resource/v1"
+	apierrors "k8s.io/apimachinery/pkg/api/errors"
 	"k8s.io/apimachinery/pkg/api/resource"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
+	"k8s.io/apimachinery/pkg/runtime"
+	"k8s.io/apimachinery/pkg/runtime/schema"
 	"k8s.io/apimachinery/pkg/types"
+	"k8s.io/client-go/kubernetes/fake"
 	corelisters "k8s.io/client-go/listers/core/v1"
+	clienttesting "k8s.io/client-go/testing"
 	"k8s.io/client-go/tools/cache"
 	"k8s.io/utils/ptr"
 )
+
+func TestGetCDIContainerEditsLabelsPodForMonitor(t *testing.T) {
+	pod := &corev1.Pod{
+		ObjectMeta: metav1.ObjectMeta{Namespace: "default", Name: "pod", UID: "pod-uid", Labels: map[string]string{"app": "workload"}},
+		Spec: corev1.PodSpec{
+			NodeName:       "node-a",
+			ResourceClaims: []corev1.PodResourceClaim{{Name: "gpu", ResourceClaimName: ptr.To("gpu-claim")}},
+			Containers:     []corev1.Container{{Name: "workload", Resources: corev1.ResourceRequirements{Claims: []corev1.ResourceClaim{{Name: "gpu"}}}}},
+		},
+	}
+	client := fake.NewClientset(pod)
+	manager := NewHAMiCoreManager(nil, t.TempDir(), client, "node-a")
+	manager.containerHookPath = t.TempDir()
+	t.Cleanup(manager.Stop)
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+	require.True(t, manager.WaitForPodCacheSync(ctx))
+	claim := newResourceClaim("gpu-claim", []resourceapi.ResourceClaimConsumerReference{{Resource: "pods", Name: pod.Name, UID: pod.UID}})
+	edits, err := manager.GetCDIContainerEdits(ctx, claim, nil)
+	require.NoError(t, err)
+	require.NotNil(t, edits)
+	got, err := client.CoreV1().Pods(pod.Namespace).Get(ctx, pod.Name, metav1.GetOptions{})
+	require.NoError(t, err)
+	require.Equal(t, "node-a", got.Labels["hami.io/vgpu-node"])
+	require.Equal(t, "workload", got.Labels["app"])
+}
+
+func TestGetCDIContainerEditsMonitorLabelSafety(t *testing.T) {
+	for _, tc := range []struct {
+		name        string
+		uid         types.UID
+		node, label string
+		denyPatch   bool
+		wantError   string
+	}{
+		{name: "nil labels", uid: "pod-uid", node: "node-a"},
+		{name: "already labeled needs no write", uid: "pod-uid", node: "node-a", label: "node-a", denyPatch: true},
+		{name: "conflicting label", uid: "pod-uid", node: "node-a", label: "node-b", wantError: "conflicting"},
+		{name: "replacement Pod", uid: "replacement-uid", node: "node-a", wantError: "UID changed"},
+		{name: "wrong node", uid: "pod-uid", node: "node-b", wantError: "assigned to node"},
+		{name: "unbound Pod", uid: "pod-uid", wantError: "assigned to node"},
+		{name: "permission denied", uid: "pod-uid", node: "node-a", denyPatch: true, wantError: "forbidden"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			pod := &corev1.Pod{
+				ObjectMeta: metav1.ObjectMeta{Namespace: "default", Name: "pod", UID: "pod-uid", ResourceVersion: "1"},
+				Spec: corev1.PodSpec{NodeName: "node-a",
+					ResourceClaims: []corev1.PodResourceClaim{{Name: "gpu", ResourceClaimName: ptr.To("gpu-claim")}},
+					Containers:     []corev1.Container{{Name: "workload", Resources: corev1.ResourceRequirements{Claims: []corev1.ResourceClaim{{Name: "gpu"}}}}},
+				},
+			}
+			live := pod.DeepCopy()
+			live.UID, live.Spec.NodeName = tc.uid, tc.node
+			if tc.label != "" {
+				live.Labels = map[string]string{hamiMonitorNodeLabel: tc.label}
+			}
+			client := fake.NewClientset(live)
+			if tc.denyPatch {
+				client.PrependReactor("patch", "pods", func(clienttesting.Action) (bool, runtime.Object, error) {
+					return true, nil, apierrors.NewForbidden(schema.GroupResource{Resource: "pods"}, pod.Name, errors.New("test denied"))
+				})
+			}
+			manager := managerWithPods(t, pod)
+			manager.clientset, manager.nodeName = client, "node-a"
+			manager.containerHookPath, manager.hostHookPath = t.TempDir(), t.TempDir()
+			claim := newResourceClaim("gpu-claim", []resourceapi.ResourceClaimConsumerReference{{Resource: "pods", Name: pod.Name, UID: pod.UID}})
+			cacheDirectory := filepath.Join(manager.containerHookPath, "vgpu", "containers", "pod-uid_workload")
+			require.NoError(t, os.MkdirAll(cacheDirectory, 0755))
+			sentinel := filepath.Join(cacheDirectory, "existing.cache")
+			require.NoError(t, os.WriteFile(sentinel, []byte("keep existing cache"), 0600))
+			edits, err := manager.GetCDIContainerEdits(context.Background(), claim, nil)
+			if tc.wantError != "" {
+				require.ErrorContains(t, err, tc.wantError)
+				require.Nil(t, edits)
+				data, readErr := os.ReadFile(sentinel)
+				require.NoError(t, readErr)
+				require.Equal(t, "keep existing cache", string(data))
+			} else {
+				require.NoError(t, err)
+				require.NotNil(t, edits)
+				got, getErr := client.CoreV1().Pods(pod.Namespace).Get(context.Background(), pod.Name, metav1.GetOptions{})
+				require.NoError(t, getErr)
+				require.Equal(t, "node-a", got.Labels[hamiMonitorNodeLabel])
+			}
+			// The informer-owned Pod was not modified in place.
+			require.Nil(t, pod.Labels)
+		})
+	}
+}
+
+func TestGetCDIContainerEditsLabelsTemplateInitPod(t *testing.T) {
+	pod := &corev1.Pod{
+		ObjectMeta: metav1.ObjectMeta{Namespace: "default", Name: "pod", UID: "pod-uid"},
+		Spec: corev1.PodSpec{NodeName: "node-a",
+			ResourceClaims: []corev1.PodResourceClaim{{Name: "gpu", ResourceClaimTemplateName: ptr.To("gpu-template")}},
+			InitContainers: []corev1.Container{{Name: "gpu-init", Resources: corev1.ResourceRequirements{Claims: []corev1.ResourceClaim{{Name: "gpu"}}}}},
+		},
+		Status: corev1.PodStatus{ResourceClaimStatuses: []corev1.PodResourceClaimStatus{{Name: "gpu", ResourceClaimName: ptr.To("generated-claim")}}},
+	}
+	client := fake.NewClientset(pod.DeepCopy())
+	manager := managerWithPods(t, pod)
+	manager.clientset, manager.nodeName = client, "node-a"
+	manager.containerHookPath = t.TempDir()
+	claim := newResourceClaim("generated-claim", []resourceapi.ResourceClaimConsumerReference{{Resource: "pods", Name: pod.Name, UID: pod.UID}})
+	edits, err := manager.GetCDIContainerEdits(context.Background(), claim, nil)
+	require.NoError(t, err)
+	require.Contains(t, edits.Env, "CUDA_DEVICE_MEMORY_SHARED_CACHE="+filepath.Join(manager.containerHookPath, "vgpu", "containers", "pod-uid_gpu-init", "claim-uid.cache"))
+	got, err := client.CoreV1().Pods(pod.Namespace).Get(context.Background(), pod.Name, metav1.GetOptions{})
+	require.NoError(t, err)
+	require.Equal(t, "node-a", got.Labels[hamiMonitorNodeLabel])
+}
+
+func TestGetCDIContainerEditsMonitorLabelRetriesConcurrentMetadataChange(t *testing.T) {
+	pod := &corev1.Pod{
+		ObjectMeta: metav1.ObjectMeta{Namespace: "default", Name: "pod", UID: "pod-uid", ResourceVersion: "1", Labels: map[string]string{"app": "workload"}},
+		Spec: corev1.PodSpec{NodeName: "node-a",
+			ResourceClaims: []corev1.PodResourceClaim{{Name: "gpu", ResourceClaimName: ptr.To("gpu-claim")}},
+			Containers:     []corev1.Container{{Name: "workload", Resources: corev1.ResourceRequirements{Claims: []corev1.ResourceClaim{{Name: "gpu"}}}}},
+		},
+	}
+	client := fake.NewClientset(pod.DeepCopy())
+	conflicted := false
+	client.PrependReactor("patch", "pods", func(action clienttesting.Action) (bool, runtime.Object, error) {
+		var patch struct {
+			Metadata metav1.ObjectMeta `json:"metadata"`
+		}
+		require.NoError(t, json.Unmarshal(action.(clienttesting.PatchAction).GetPatch(), &patch))
+		require.Equal(t, pod.UID, patch.Metadata.UID)
+		if !conflicted {
+			require.Equal(t, "1", patch.Metadata.ResourceVersion)
+			conflicted = true
+			changed := pod.DeepCopy()
+			changed.ResourceVersion = "2"
+			changed.Labels["concurrent"] = "preserved"
+			require.NoError(t, client.Tracker().Update(corev1.SchemeGroupVersion.WithResource("pods"), changed, pod.Namespace))
+			return true, nil, apierrors.NewConflict(schema.GroupResource{Resource: "pods"}, pod.Name, errors.New("metadata changed"))
+		}
+		require.Equal(t, "2", patch.Metadata.ResourceVersion)
+		return false, nil, nil
+	})
+	manager := managerWithPods(t, pod)
+	manager.clientset, manager.nodeName = client, "node-a"
+	manager.containerHookPath = t.TempDir()
+	claim := newResourceClaim("gpu-claim", []resourceapi.ResourceClaimConsumerReference{{Resource: "pods", Name: pod.Name, UID: pod.UID}})
+	edits, err := manager.GetCDIContainerEdits(context.Background(), claim, nil)
+	require.NoError(t, err)
+	require.NotNil(t, edits)
+	got, err := client.CoreV1().Pods(pod.Namespace).Get(context.Background(), pod.Name, metav1.GetOptions{})
+	require.NoError(t, err)
+	require.Equal(t, map[string]string{"app": "workload", "concurrent": "preserved", hamiMonitorNodeLabel: "node-a"}, got.Labels)
+}
 
 func TestPodClaimAliasForResourceClaim(t *testing.T) {
 	tests := []struct {
@@ -388,7 +548,13 @@ func TestGetCDIContainerEditsCachePath(t *testing.T) {
 		t.Fatalf("create stale cache file: %v", err)
 	}
 
-	edits := manager.GetCDIContainerEdits(claim, devices)
+	// Use a live node-bound Pod for the monitor's metadata patch.
+	livePod := pod.DeepCopy()
+	livePod.Spec.NodeName = "node-a"
+	manager.clientset = fake.NewClientset(livePod)
+	manager.nodeName = "node-a"
+	edits, err := manager.GetCDIContainerEdits(context.Background(), claim, devices)
+	require.NoError(t, err)
 	wantCache := filepath.Join(wantDirectory, "claim-uid.cache")
 
 	wantEnv := []string{
