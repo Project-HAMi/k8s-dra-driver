@@ -16,6 +16,7 @@ BUILD_MULTI_ARCH_IMAGES ?= no
 DOCKER ?= docker
 REGCTL ?= regctl
 PUSH_ON_BUILD ?= false
+.DEFAULT_GOAL := build
 
 ##### Global variables #####
 include $(CURDIR)/versions.mk
@@ -34,7 +35,7 @@ IMAGE_TAG ?= $(IMAGE_VERSION)
 IMAGE = $(IMAGE_NAME):$(IMAGE_TAG)
 
 ##### Public rules #####
-.PHONY: build
+.PHONY: build validate-monitor-image
 
 ifeq ($(BUILD_MULTI_ARCH_IMAGES),true)
 DOCKER_BUILD_OPTIONS = \
@@ -56,7 +57,18 @@ endif
 DOCKERFILE = $(CURDIR)/deploy/container/Dockerfile
 
 # Build the container image
-build:
+validate-monitor-image:
+	@case "$(HAMI_VGPUMONITOR_SOURCE)" in \
+		source) test -n "$(strip $(HAMI_VGPUMONITOR_REF))" || { echo "Set HAMI_VGPUMONITOR_REF to a HAMi branch, tag or commit." >&2; exit 1; } ;; \
+		image) test -n "$(strip $(HAMI_VGPUMONITOR_IMAGE))" || { echo "Set HAMI_VGPUMONITOR_IMAGE to a compatible image; v2.9.0 is unsupported." >&2; exit 1; }; \
+			case "$(HAMI_VGPUMONITOR_IMAGE)" in \
+				scratch) echo "Set HAMI_VGPUMONITOR_IMAGE; scratch is unsupported for image extraction." >&2; exit 1 ;; \
+				projecthami/hami:v2.9.0|docker.io/projecthami/hami:v2.9.0) echo "HAMi v2.9.0 is unsupported." >&2; exit 1 ;; \
+			esac ;; \
+		*) echo "HAMI_VGPUMONITOR_SOURCE must be source or image." >&2; exit 1 ;; \
+	esac
+
+build: validate-monitor-image
 	DOCKER_BUILDKIT=1 \
 		$(DOCKER) buildx build --pull \
 		$(DOCKER_BUILD_OPTIONS) \
@@ -66,7 +78,9 @@ build:
 		--build-arg BASH_STATIC_GIT_REF="$(BASH_STATIC_GIT_REF)" \
 		--build-arg TOOLKIT_CONTAINER_IMAGE="$(TOOLKIT_CONTAINER_IMAGE)" \
 		--build-arg HAMI_CORE_BUILD_IMAGE="$(HAMI_CORE_BUILD_IMAGE)" \
-		--build-arg HAMI_VGPUMONITOR_IMAGE="$(HAMI_VGPUMONITOR_IMAGE)" \
+		--build-arg HAMI_VGPUMONITOR_SOURCE="$(HAMI_VGPUMONITOR_SOURCE)" \
+		--build-arg HAMI_VGPUMONITOR_REF="$(HAMI_VGPUMONITOR_REF)" \
+		--build-arg HAMI_VGPUMONITOR_IMAGE="$(if $(HAMI_VGPUMONITOR_IMAGE),$(HAMI_VGPUMONITOR_IMAGE),scratch)" \
 		--build-arg VERSION="$(VERSION)" \
 		--build-arg GIT_COMMIT="$(GIT_COMMIT)" \
 		--progress=plain \

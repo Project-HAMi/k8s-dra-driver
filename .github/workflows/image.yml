@@ -20,6 +20,22 @@ on:
       - 'hack/**'
       - 'scripts/**'
   workflow_dispatch:
+    inputs:
+      monitor_source:
+        description: 'Monitor source: source (HAMi Git) or image (release extraction)'
+        required: false
+        type: choice
+        options:
+          - source
+          - image
+      monitor_ref:
+        description: 'HAMi branch, tag or commit; defaults to master'
+        required: false
+        type: string
+      monitor_image:
+        description: 'Compatible HAMi monitor image (tag or digest); defaults to repository variable HAMI_VGPUMONITOR_IMAGE'
+        required: false
+        type: string
 
 permissions:
   contents: read
@@ -27,6 +43,10 @@ permissions:
 jobs:
   image:
     runs-on: ubuntu-latest
+    env:
+      HAMI_VGPUMONITOR_SOURCE: ${{ inputs.monitor_source || vars.HAMI_VGPUMONITOR_SOURCE || 'source' }}
+      HAMI_VGPUMONITOR_REF: ${{ inputs.monitor_ref || vars.HAMI_VGPUMONITOR_REF || 'master' }}
+      HAMI_VGPUMONITOR_IMAGE: ${{ inputs.monitor_image || vars.HAMI_VGPUMONITOR_IMAGE || 'scratch' }}
     permissions:
       contents: read
       packages: write
@@ -75,11 +95,15 @@ jobs:
       id: args
       shell: bash
       run: |
+        make -f deploy/container/Makefile validate-monitor-image
         {
           echo "golang_version=$(make print-GOLANG_VERSION)"
           echo "bash_static_git_ref=$(make print-BASH_STATIC_GIT_REF)"
           echo "toolkit_container_image=$(make print-TOOLKIT_CONTAINER_IMAGE)"
           echo "hami_core_build_image=$(make print-HAMI_CORE_BUILD_IMAGE)"
+          echo "hami_vgpumonitor_source=$(make print-HAMI_VGPUMONITOR_SOURCE)"
+          echo "hami_vgpumonitor_ref=$(make print-HAMI_VGPUMONITOR_REF)"
+          echo "hami_vgpumonitor_image=$(make print-HAMI_VGPUMONITOR_IMAGE)"
           echo "git_commit=$(make print-GIT_COMMIT)"
         } >> "${GITHUB_OUTPUT}"
 
@@ -101,5 +125,8 @@ jobs:
           BASH_STATIC_GIT_REF=${{ steps.args.outputs.bash_static_git_ref }}
           TOOLKIT_CONTAINER_IMAGE=${{ steps.args.outputs.toolkit_container_image }}
           HAMI_CORE_BUILD_IMAGE=${{ steps.args.outputs.hami_core_build_image }}
+          HAMI_VGPUMONITOR_SOURCE=${{ steps.args.outputs.hami_vgpumonitor_source }}
+          HAMI_VGPUMONITOR_REF=${{ steps.args.outputs.hami_vgpumonitor_ref }}
+          HAMI_VGPUMONITOR_IMAGE=${{ steps.args.outputs.hami_vgpumonitor_image }}
           VERSION=${{ steps.prep.outputs.version }}
           GIT_COMMIT=${{ steps.args.outputs.git_commit }}
