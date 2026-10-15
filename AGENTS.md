@@ -169,7 +169,7 @@ This section defines the architectural agents within the project for SDD.
     *   Activated by `DRA_MODE=true`; in this mode MIG metrics collection and stale-cache self-cleanup are disabled (the DRA driver owns lifecycle cleanup).
     *   Requires `HOOK_PATH` and `NODE_NAME` environment variables.
     *   Requires `host-vgpu` and `host-tmp` volume mounts for cache access.
-    *   Requires a read-only `driver-root` mount and explicit NVML loading when NVIDIA runtime library injection is unavailable. The monitor entrypoint searches the same driver library directories as the plugin and preloads only `libnvidia-ml.so.1` before executing the upstream binary.
+    *   Matches HAMi's NVIDIA runtime deployment model: the node's default NVIDIA Container Runtime injects NVML using `NVIDIA_VISIBLE_DEVICES=all` and `NVIDIA_DRIVER_CAPABILITIES=utility`. The monitor runs directly, without a `driver-root` mount or library-preload wrapper. The driver's own explicit driver-root loading remains unchanged.
 
 ---
 

@@ -185,23 +185,14 @@ spec:
         imagePullPolicy: {{ .Values.image.pullPolicy }}
         securityContext:
           privileged: true
-        command: ["bash", "-ec"]
-        args:
-        - |-
-          # Like the plugin, use the configured host driver rather than relying
-          # on NVIDIA runtime injection (DRA nodes may use plain runc).
-          # Preload only NVML: adding host library directories to LD_LIBRARY_PATH
-          # could also replace the image's libc with an incompatible host libc.
-          for directory in /usr/lib64 /usr/lib/x86_64-linux-gnu /usr/lib/aarch64-linux-gnu /lib64 /lib/x86_64-linux-gnu /lib/aarch64-linux-gnu /usr/local/lib /usr/local/lib64; do
-            library="/driver-root${directory}/libnvidia-ml.so.1"
-            if [ -r "$library" ]; then
-              export LD_PRELOAD="${library}${LD_PRELOAD:+:${LD_PRELOAD}}"
-              exec vGPUmonitor
-            fi
-          done
-          echo "libnvidia-ml.so.1 not found under /driver-root; check nvidiaDriverRoot and the host NVIDIA driver installation" >&2
-          exit 1
+        command: ["vGPUmonitor"]
         env:
+        # Match HAMi's monitor deployment: the node's NVIDIA runtime injects
+        # NVML. GPU device access alone (including privileged mode) is not enough.
+        - name: NVIDIA_VISIBLE_DEVICES
+          value: "all"
+        - name: NVIDIA_DRIVER_CAPABILITIES
+          value: "utility"
         - name: NODE_NAME
           valueFrom:
             fieldRef:
@@ -219,10 +210,6 @@ spec:
           containerPort: 9394
           protocol: TCP
         volumeMounts:
-        - name: driver-root
-          mountPath: /driver-root
-          mountPropagation: HostToContainer
-          readOnly: true
         - name: host-vgpu
           mountPath: "/usr/local/vgpu"
         - name: host-tmp
