@@ -10,8 +10,42 @@ import (
 
 	appsv1 "k8s.io/api/apps/v1"
 	corev1 "k8s.io/api/core/v1"
+	rbacv1 "k8s.io/api/rbac/v1"
 	"k8s.io/apimachinery/pkg/util/yaml"
 )
+
+func TestPodLabelPatchRBAC(t *testing.T) {
+	if _, err := exec.LookPath("helm"); err != nil {
+		t.Skip("helm is required for chart rendering tests")
+	}
+	output, err := exec.Command("helm", "template", "test", "../hami-dra-driver", "--namespace", "hami-system", "--kube-version", "1.34.0",
+		"--show-only", "templates/rbac-kubeletplugin.yaml.yaml").CombinedOutput()
+	if err != nil {
+		t.Fatalf("helm template: %v\n%s", err, output)
+	}
+	decoder := yaml.NewYAMLOrJSONDecoder(bytes.NewReader(output), 4096)
+	for {
+		var role rbacv1.ClusterRole
+		if err := decoder.Decode(&role); err != nil {
+			if err == io.EOF {
+				t.Fatal("Pod-patch RBAC not rendered")
+			}
+			t.Fatal(err)
+		}
+		if role.Kind != "ClusterRole" {
+			continue
+		}
+		for _, rule := range role.Rules {
+			if !reflect.DeepEqual(rule.APIGroups, []string{""}) || !reflect.DeepEqual(rule.Resources, []string{"pods"}) {
+				continue
+			}
+			if !reflect.DeepEqual(rule.Verbs, []string{"get", "list", "watch", "patch"}) {
+				t.Fatalf("Pod permissions = %v, want read plus patch only", rule.Verbs)
+			}
+			return
+		}
+	}
+}
 
 func renderDaemonSet(t *testing.T, enabled, driverRoot, hookRoot string) appsv1.DaemonSet {
 	t.Helper()
@@ -84,13 +118,13 @@ func TestMonitorRuntimeInjectionAndCacheMount(t *testing.T) {
 				}
 				for name, want := range map[string]string{
 					"NVIDIA_VISIBLE_DEVICES": "all", "NVIDIA_DRIVER_CAPABILITIES": "utility",
-					"HOOK_PATH": "/usr/local/vgpu", "DRA_MODE": "true",
+					"HOOK_PATH": "/usr/local/vgpu",
 				} {
 					if variables[name] != want {
 						t.Errorf("%s = %q, want %q", name, variables[name], want)
 					}
 				}
-				for _, name := range []string{"LD_PRELOAD", "LD_LIBRARY_PATH", "NVIDIA_DRIVER_ROOT"} {
+				for _, name := range []string{"LD_PRELOAD", "LD_LIBRARY_PATH", "NVIDIA_DRIVER_ROOT", "DRA_MODE"} {
 					if _, found := variables[name]; found {
 						t.Errorf("unexpected monitor library override %s", name)
 					}

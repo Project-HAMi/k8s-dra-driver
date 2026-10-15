@@ -92,6 +92,7 @@ This section defines the architectural agents within the project for SDD.
     *   Wraps a physical `GpuInfo` into a `HAMiGpuInfo` device (`wrapHAMiCoreGpu`), which exposes `cores` and `memory` as partitionable `CapacityRequestPolicy` fields with step/min/max constraints.
     *   Implements `GetCDIContainerEdits` to produce `CDI ContainerEdits` for a prepared claim:
         *   Resolves direct and template-generated ResourceClaims to Pod-local aliases and validates the reserving Pod UID.
+        *   For resolved Pods, adds `hami.io/vgpu-node=<nodeName>` for compatibility with upstream vGPUmonitor's legacy metric selector. Uses a live UID/node check and a resourceVersion/UID-guarded metadata patch; preserves unrelated labels and refuses conflicting node labels. The method accepts the prepare context and returns errors; label failures propagate to preparation before cache/CDI changes. Existing unresolved-claim fallback behavior remains unchanged.
         *   Creates `/usr/local/vgpu/containers/<podUID>_<containerName>/<claimUID>.cache` (in-container path), with host CDI sources under `<hostHookPath>/vgpu/containers/`.
         *   Mounts `<hostHookPath>/vgpu/libvgpu.so` on the host to `/usr/local/vgpu/libvgpu.so` in the container, and `<hostHookPath>/vgpu/ld.so.preload` to `/etc/ld.so.preload` (both read-only).
         *   `hostHookPath` defaults to `/usr/local` and can be overridden via `HAMI_HOST_HOOK_PATH` (Helm: `driver.hostHookPath`); the in-container path is fixed because the baked-in `ld.so.preload` refers to it.
@@ -99,6 +100,7 @@ This section defines the architectural agents within the project for SDD.
         *   Injects per-device environment variables: `CUDA_DEVICE_SM_LIMIT_<idx>`, `CUDA_DEVICE_MEMORY_LIMIT_<idx>`, and `CUDA_DEVICE_MEMORY_SHARED_CACHE`.
         *   Reads actual consumed capacity (`cores`, `memory`) from `result.ConsumedCapacity` in the claim status.
     *   Implements `Unprepare` — removes the claim cache directory on unprepare.
+        *   Retains the Pod's node label until Pod deletion, because another claim/container in the Pod may still need monitoring. HAMi-Core preparation requires `get` and `patch` access to Pods even if the optional monitor sidecar is disabled; custom RBAC must grant these permissions.
     *   Defines `HAMiGpuDeviceType` (`hami-gpu`) constant and `PreparedHAMiGpu` type for tracking prepared HAMi-Core allocations.
 *   **Constraints:**
     *   `featuregates.HAMiCoreSupport` is mutually exclusive with `TimeSlicingSettings`, `MPSSupport`, `PassthroughSupport`, `DynamicMIG`, and `ComputeDomainCliques`.
@@ -166,9 +168,9 @@ This section defines the architectural agents within the project for SDD.
     *   Emits host-level GPU metrics (`hami_host_gpu_memory_used_bytes`, `hami_host_gpu_utilization_ratio`) via NVML.
     *   Applies soft-QoS feedback (`recentKernel`/`utilizationSwitch`) by reading/writing the mmaped shared-region.
     *   Serves metrics on `:9394/metrics`.
-*   **Constraints (DRA Mode):**
+*   **Constraints (DRA integration):**
     *   Runs as a DaemonSet sidecar in the kubelet plugin pod.
-    *   Activated by `DRA_MODE=true`; in this mode MIG metrics collection and stale-cache self-cleanup are disabled (the DRA driver owns lifecycle cleanup).
+    *   There is no `DRA_MODE` switch. The shared scanner leaves cache-directory cleanup to the DRA driver. Do not assume MIG collection or lock setup is disabled.
     *   Requires `HOOK_PATH` and `NODE_NAME` environment variables.
     *   Requires `host-vgpu` and `host-tmp` volume mounts for cache access.
     *   Matches HAMi's NVIDIA runtime deployment model: the node's default NVIDIA Container Runtime injects NVML using `NVIDIA_VISIBLE_DEVICES=all` and `NVIDIA_DRIVER_CAPABILITIES=utility`. The monitor runs directly, without a `driver-root` mount or library-preload wrapper. The driver's own explicit driver-root loading remains unchanged.

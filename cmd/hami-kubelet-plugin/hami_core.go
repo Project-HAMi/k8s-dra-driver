@@ -18,6 +18,7 @@ package main
 
 import (
 	"context"
+	"encoding/json"
 	"fmt"
 	"maps"
 	"os"
@@ -32,10 +33,12 @@ import (
 	resourceapi "k8s.io/api/resource/v1"
 	"k8s.io/apimachinery/pkg/api/resource"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
+	"k8s.io/apimachinery/pkg/types"
 	"k8s.io/client-go/informers"
 	"k8s.io/client-go/kubernetes"
 	corelisters "k8s.io/client-go/listers/core/v1"
 	"k8s.io/client-go/tools/cache"
+	"k8s.io/client-go/util/retry"
 	"k8s.io/dynamic-resource-allocation/kubeletplugin"
 	"k8s.io/klog/v2"
 	"k8s.io/utils/ptr"
@@ -187,6 +190,9 @@ const hookPath = "/usr/local"
 // mounted at hookPath in this plugin's container.
 const hostHookPathEnvVar = "HAMI_HOST_HOOK_PATH"
 
+// Upstream vGPUmonitor uses this legacy label to select Pods for container metrics.
+const hamiMonitorNodeLabel = "hami.io/vgpu-node"
+
 // For sharing.go
 type HAMiCoreManager struct {
 	// hostHookPath addresses the same tree as hookPath, but as seen from the
@@ -197,6 +203,7 @@ type HAMiCoreManager struct {
 	containerHookPath string
 	nvdevlib          *deviceLib
 	nodeName          string
+	clientset         kubernetes.Interface
 
 	podInformerFactory informers.SharedInformerFactory
 	podLister          corelisters.PodLister
@@ -210,6 +217,7 @@ func NewHAMiCoreManager(deviceLib *deviceLib, hostHookPath string, clientset kub
 		hostHookPath:      filepath.Clean(hostHookPath),
 		containerHookPath: hookPath,
 		nodeName:          nodeName,
+		clientset:         clientset,
 		stopCh:            make(chan struct{}),
 	}
 	if clientset != nil {
@@ -325,7 +333,49 @@ func (m *HAMiCoreManager) resolveClaimToPod(claim *resourceapi.ResourceClaim) (*
 	return pod, containerName, nil
 }
 
-func (m *HAMiCoreManager) GetCDIContainerEdits(claim *resourceapi.ResourceClaim, devs AllocatableDevices) *cdiapi.ContainerEdits {
+// ensurePodMonitorLabel uses the live Pod, not the informer snapshot, so retries
+// and other claims on the same Pod see the latest labels. UID and resourceVersion
+// in the patch protect against Pod replacement and concurrent metadata changes.
+func (m *HAMiCoreManager) ensurePodMonitorLabel(ctx context.Context, pod *corev1.Pod) error {
+	if m.clientset == nil || m.nodeName == "" {
+		return fmt.Errorf("Pod client and node name are required for vGPUmonitor labeling")
+	}
+	err := retry.RetryOnConflict(retry.DefaultBackoff, func() error {
+		live, err := m.clientset.CoreV1().Pods(pod.Namespace).Get(ctx, pod.Name, metav1.GetOptions{})
+		if err != nil {
+			return err
+		}
+		if live.UID != pod.UID {
+			return fmt.Errorf("Pod UID changed from %s to %s", pod.UID, live.UID)
+		}
+		if live.Spec.NodeName != m.nodeName {
+			return fmt.Errorf("Pod is assigned to node %q, not %q", live.Spec.NodeName, m.nodeName)
+		}
+		if current := live.Labels[hamiMonitorNodeLabel]; current != "" {
+			if current != m.nodeName {
+				return fmt.Errorf("conflicting %s label %q, expected %q", hamiMonitorNodeLabel, current, m.nodeName)
+			}
+			return nil
+		}
+		patch, err := json.Marshal(map[string]interface{}{
+			"metadata": map[string]interface{}{
+				"uid": live.UID, "resourceVersion": live.ResourceVersion,
+				"labels": map[string]string{hamiMonitorNodeLabel: m.nodeName},
+			},
+		})
+		if err != nil {
+			return err
+		}
+		_, err = m.clientset.CoreV1().Pods(pod.Namespace).Patch(ctx, pod.Name, types.MergePatchType, patch, metav1.PatchOptions{})
+		return err
+	})
+	if err != nil {
+		return fmt.Errorf("label Pod %s/%s for vGPUmonitor: %w", pod.Namespace, pod.Name, err)
+	}
+	return nil
+}
+
+func (m *HAMiCoreManager) GetCDIContainerEdits(ctx context.Context, claim *resourceapi.ResourceClaim, devs AllocatableDevices) (*cdiapi.ContainerEdits, error) {
 	pod, containerName, err := m.resolveClaimToPod(claim)
 	if err != nil {
 		klog.Warningf("HAMiCoreManager: cannot resolve claim %s to pod/container: %v", claim.UID, err)
@@ -334,6 +384,10 @@ func (m *HAMiCoreManager) GetCDIContainerEdits(claim *resourceapi.ResourceClaim,
 		pod = &corev1.Pod{}
 		pod.UID = claim.UID
 		containerName = "unknown"
+	} else if err := m.ensurePodMonitorLabel(ctx, pod); err != nil {
+		// Do not alter cache directories or return successful preparation when
+		// a resolved workload cannot be made discoverable by the monitor.
+		return nil, err
 	}
 
 	podUID := string(pod.UID)
@@ -414,7 +468,7 @@ func (m *HAMiCoreManager) GetCDIContainerEdits(claim *resourceapi.ResourceClaim,
 				},
 			},
 		},
-	}
+	}, nil
 }
 
 func (m *HAMiCoreManager) Unprepare(claimUID string, pl PreparedDeviceList) error {
