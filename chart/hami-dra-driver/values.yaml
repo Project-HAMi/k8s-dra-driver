@@ -61,6 +61,8 @@ serviceAccount:
   name: ""
 
 # HAMi-specific host paths
+# HAMiCoreSupport preparation labels reserving Pods with hami.io/vgpu-node.
+# If managing RBAC externally, grant the driver get/list/watch/patch on Pods.
 driver:
   cdiRoot: /var/run/cdi
   hostHookPath: /usr/local
@@ -77,6 +79,11 @@ featureGates: {}
 # klog verbosity level passed to hami-kubelet-plugin via -v flag.
 # 0 = errors/warnings/info only; higher numbers increase verbosity.
 logVerbosity: "4"
+
+monitor:
+  # Requires NVIDIA Container Runtime as the node's default runtime to inject NVML.
+  enabled: false
+  resources: {}
 
 kubeletPlugin:
   priorityClassName: "system-node-critical"

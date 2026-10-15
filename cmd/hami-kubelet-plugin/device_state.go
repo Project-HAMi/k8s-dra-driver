@@ -126,7 +126,10 @@ func NewDeviceState(ctx context.Context, config *Config) (*DeviceState, error) {
 
 	var hamiCoreManager *HAMiCoreManager
 	if featuregates.Enabled(featuregates.HAMiCoreSupport) {
-		hamiCoreManager = NewHAMiCoreManager(nvdevlib)
+		hamiCoreManager = NewHAMiCoreManager(nvdevlib, config.flags.hostHookPath, config.clientsets.Core, config.flags.nodeName)
+		if !hamiCoreManager.WaitForPodCacheSync(ctx) {
+			klog.Warningf("HAMiCoreManager Pod cache sync was cancelled or timed out; claim-to-pod resolution may be unavailable initially")
+		}
 	}
 
 	var tsManager *TimeSlicingManager
@@ -998,7 +1001,11 @@ func (s *DeviceState) applySharingConfig(ctx context.Context, config configapi.S
 	var configState DeviceConfigState
 
 	if featuregates.Enabled(featuregates.HAMiCoreSupport) {
-		configState.containerEdits = s.hamiCoreManager.GetCDIContainerEdits(claim, requestedDevices)
+		var err error
+		configState.containerEdits, err = s.hamiCoreManager.GetCDIContainerEdits(ctx, claim, requestedDevices)
+		if err != nil {
+			return nil, fmt.Errorf("error configuring HAMi-Core claim %s: %w", claim.UID, err)
+		}
 	}
 
 	// Apply time-slicing settings (if available and feature gate enabled).

@@ -86,4 +86,4 @@ golangci-lint:
 .PHONY: .image image
 image: .image
 .image:
-	make -f deploy/container/Makefile build
+	$(MAKE) -f deploy/container/Makefile build

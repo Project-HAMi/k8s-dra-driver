@@ -69,6 +69,8 @@ rules:
   - get
   - list
   - watch
+  # HAMi-Core preparation labels the reserving Pod for upstream vGPUmonitor.
+  - patch
 ---
 apiVersion: v1
 kind: ServiceAccount

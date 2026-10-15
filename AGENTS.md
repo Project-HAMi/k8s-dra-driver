@@ -4,6 +4,8 @@ This document outlines the operational principles for AI-assisted development an
 
 > **Spec Version:** `5f92650` — This document reflects the codebase as of commit `5f92650`.
 
+Read [AGENTS.local.md](AGENTS.local.md) alongside this document for local workflow preferences, remote GPU test procedures, and retained test-environment instructions. Remote E2E requires explicit user authorization.
+
 ---
 
 ## Part 1: AI Assistant Operational Framework
@@ -89,13 +91,16 @@ This section defines the architectural agents within the project for SDD.
 *   **Responsibilities:**
     *   Wraps a physical `GpuInfo` into a `HAMiGpuInfo` device (`wrapHAMiCoreGpu`), which exposes `cores` and `memory` as partitionable `CapacityRequestPolicy` fields with step/min/max constraints.
     *   Implements `GetCDIContainerEdits` to produce `CDI ContainerEdits` for a prepared claim:
-        *   Creates a per-claim cache directory under `/usr/local/vgpu/claims/<claimUID>/` (in-container path).
+        *   Resolves direct and template-generated ResourceClaims to Pod-local aliases and validates the reserving Pod UID.
+        *   For resolved Pods, adds `hami.io/vgpu-node=<nodeName>` for compatibility with upstream vGPUmonitor's legacy metric selector. Uses a live UID/node check and a resourceVersion/UID-guarded metadata patch; preserves unrelated labels and refuses conflicting node labels. The method accepts the prepare context and returns errors; label failures propagate to preparation before cache/CDI changes. Existing unresolved-claim fallback behavior remains unchanged.
+        *   Creates `/usr/local/vgpu/containers/<podUID>_<containerName>/<claimUID>.cache` (in-container path), with host CDI sources under `<hostHookPath>/vgpu/containers/`.
         *   Mounts `<hostHookPath>/vgpu/libvgpu.so` on the host to `/usr/local/vgpu/libvgpu.so` in the container, and `<hostHookPath>/vgpu/ld.so.preload` to `/etc/ld.so.preload` (both read-only).
         *   `hostHookPath` defaults to `/usr/local` and can be overridden via `HAMI_HOST_HOOK_PATH` (Helm: `driver.hostHookPath`); the in-container path is fixed because the baked-in `ld.so.preload` refers to it.
         *   Mounts the claim cache directory and `/tmp/vgpulock` as read-write bind mounts.
         *   Injects per-device environment variables: `CUDA_DEVICE_SM_LIMIT_<idx>`, `CUDA_DEVICE_MEMORY_LIMIT_<idx>`, and `CUDA_DEVICE_MEMORY_SHARED_CACHE`.
         *   Reads actual consumed capacity (`cores`, `memory`) from `result.ConsumedCapacity` in the claim status.
     *   Implements `Unprepare` — removes the claim cache directory on unprepare.
+        *   Retains the Pod's node label until Pod deletion, because another claim/container in the Pod may still need monitoring. HAMi-Core preparation requires `get` and `patch` access to Pods even if the optional monitor sidecar is disabled; custom RBAC must grant these permissions.
     *   Defines `HAMiGpuDeviceType` (`hami-gpu`) constant and `PreparedHAMiGpu` type for tracking prepared HAMi-Core allocations.
 *   **Constraints:**
     *   `featuregates.HAMiCoreSupport` is mutually exclusive with `TimeSlicingSettings`, `MPSSupport`, `PassthroughSupport`, `DynamicMIG`, and `ComputeDomainCliques`.
@@ -152,6 +157,23 @@ This section defines the architectural agents within the project for SDD.
     *   Defines `MigLiveTuple` — the concrete counterpart, adding `MigUUID` and `ParentUUID` once the MIG device has been created.
     *   Provides `NewMigSpecTupleFromCanonicalName` for parsing canonical device names (e.g., `gpu-1-mig-2g47gb-14-0`) back into `MigSpecTuple`.
 *   **Constraints:** Used exclusively within the `DynamicMIG` feature gate code paths.
+
+### 9. HAMi Core Monitor (Metrics & QoS Agent)
+**Source:** upstream HAMi `master` (`HAMI_VGPUMONITOR_SOURCE=source`, configurable `HAMI_VGPUMONITOR_REF`); optional release-image extraction via `HAMI_VGPUMONITOR_SOURCE=image` and `HAMI_VGPUMONITOR_IMAGE`.
+*   **Role:** Exports Prometheus GPU metrics and performs soft-QoS feedback for HAMi-Core virtualized workloads.
+*   **Responsibilities:**
+    *   Scans `<hostHookPath>/vgpu/containers/<podUID>_<containerName>/` for `.cache` files created by `libvgpu.so`.
+    *   Auto-detects v0 (`1197897` byte) and v1 (`majorVersion == 1`) cache formats, providing backward compatibility.
+    *   Emits per-container vGPU metrics with pod-aware labels.
+    *   Emits host-level GPU metrics (`hami_host_gpu_memory_used_bytes`, `hami_host_gpu_utilization_ratio`) via NVML.
+    *   Applies soft-QoS feedback (`recentKernel`/`utilizationSwitch`) by reading/writing the mmaped shared-region.
+    *   Serves metrics on `:9394/metrics`.
+*   **Constraints (DRA integration):**
+    *   Runs as a DaemonSet sidecar in the kubelet plugin pod.
+    *   There is no `DRA_MODE` switch. The shared scanner leaves cache-directory cleanup to the DRA driver. Do not assume MIG collection or lock setup is disabled.
+    *   Requires `HOOK_PATH` and `NODE_NAME` environment variables.
+    *   Requires `host-vgpu` and `host-tmp` volume mounts for cache access.
+    *   Matches HAMi's NVIDIA runtime deployment model: the node's default NVIDIA Container Runtime injects NVML using `NVIDIA_VISIBLE_DEVICES=all` and `NVIDIA_DRIVER_CAPABILITIES=utility`. The monitor runs directly, without a `driver-root` mount or library-preload wrapper. The driver's own explicit driver-root loading remains unchanged.
 
 ---
 
@@ -221,13 +243,15 @@ The project produces a single distroless-based container image that bundles all 
     2.  `build`: Uses `nvcr.io/nvidia/base/ubuntu:jammy-20251013` to compile the `hami-kubelet-plugin` Go binary via `make cmds`. Supports cross-compilation for `amd64`/`arm64`.
     3.  `bash`: Pulls a pre-built static `bash` binary from `ghcr.io/nvidia/k8s-dra-driver-gpu:v25.12.0-dev-839e966a` (avoids slow/fragile cross-compiled bash builds).
     4.  `toolkit`: Extracts `nvidia-cdi-hook` from `${TOOLKIT_CONTAINER_IMAGE}`.
-    5.  `final` (distroless): Assembles artifacts from all prior stages.
+    5.  `vgpumonitor-source` / `vgpumonitor-image`: Builds HAMi's monitor from the selected Git ref with target-architecture CGO, or extracts it from a verified release image. The `vgpumonitor` stage selects the configured mode; source mode defaults to upstream `master`.
+    6.  `final` (distroless): Assembles artifacts from all selected stages and smoke-tests executable versions.
 
 ### 3. Key Artifacts in Image
 
 | Path in Image | Source Stage | Purpose |
 |---|---|---|
 | `/usr/bin/hami-kubelet-plugin` | `build` | Main Driver Agent binary. |
+| `/usr/bin/vGPUmonitor` | HAMi source build (default) or verified release image | GPU monitor and Prometheus metrics exporter for HAMi-Core. |
 | `/usr/local/lib/hami/libvgpu.so` | `hami-core-build` | Enforcement library injected into containers. |
 | `/usr/local/lib/hami/ld.so.preload` | `hami-core-build` | Preload config that activates `libvgpu.so` in containers. |
 | `/usr/bin/vgpu-init.sh` | `hami-core-build` | Node-level initialization script for vGPU. |
@@ -249,10 +273,12 @@ helm install hami-dra-driver ./chart/hami-dra-driver \
 ```
 
 Key templates:
-- `daemonset.yaml` — Deploys the kubelet plugin DaemonSet.
+- `daemonset.yaml` — Deploys the kubelet plugin DaemonSet; conditionally injects the `vGPUmonitor` sidecar when `monitor.enabled=true`.
 - `rbac-kubeletplugin.yaml.yaml` — RBAC including granular DRA status authorization rules.
 - `deviceclass-hami-gpu.yaml` — The `DeviceClass` for `hami-core-gpu.project-hami.io`.
 - `validation.yaml` — Helm validation hooks.
+
+The `monitor.enabled` value (default `false`) controls whether the metrics sidecar is rendered. When enabled, the sidecar mounts `host-vgpu` and `host-tmp` and exposes port `9394`. The kubelet plugin itself does not expose metrics directly — the monitor container handles all metric scraping.
 
 ### 4. Build Commands
 The build is orchestrated via `Makefile` (top-level) and `deploy/container/Makefile` (image builds).
@@ -280,6 +306,9 @@ make -f deploy/container/Makefile build BUILD_MULTI_ARCH_IMAGES=true PUSH_ON_BUI
 | `GOLANG_VERSION` | `hack/golang-version.sh` | Go compiler version. |
 | `TOOLKIT_CONTAINER_IMAGE` | `hack/toolkit-container-image.sh` | Source image for `nvidia-cdi-hook`. |
 | `HAMI_CORE_BUILD_IMAGE` | `versions.mk` | CUDA image used to compile `libvgpu.so`. |
+| `HAMI_VGPUMONITOR_SOURCE` | `versions.mk` | `source` (default) or `image`; selects monitor packaging mode. |
+| `HAMI_VGPUMONITOR_REF` | `versions.mk` | HAMi source branch/tag/commit; defaults to upstream `master`. |
+| `HAMI_VGPUMONITOR_IMAGE` | `versions.mk` | Source image in image mode; planned switch to verified v2.11.0 after release. |
 | `VERSION` | `versions.mk` | Embedded in the binary at link time. |
 | `GIT_COMMIT` | `git describe` | Embedded in the binary at link time. |
 
@@ -294,3 +323,4 @@ make -f deploy/container/Makefile build BUILD_MULTI_ARCH_IMAGES=true PUSH_ON_BUI
 | `0d0d90a` | feat: Support install with helm chart | Added `chart/hami-dra-driver/` for Helm-based cluster deployment. |
 | `a2ad09e` | fix: inject failed for hami-gpu | Prepare logic bypasses overlap validation and partial-rollback when `HAMiCoreSupport` is enabled; completed claims are non-idempotent. |
 | `6841f23` | fix: invalide featuregates | `pkg/flags/` package extracted for reusable CLI flags (`FeatureGateConfig`, `LoggingConfig`, `KubeClientConfig`); `ComputeDomainCliques` default changed to `false`. |
+| `HEAD` | feat: add vGPUmonitor DRA support | Replaced `cmd/hami-core-monitor/` with upstream `vGPUmonitor`. DRA driver creates `<podUID>_<containerName>/<claimUID>.cache` layout. `HAMI_VGPUMONITOR_IMAGE` build-arg is configurable. |
