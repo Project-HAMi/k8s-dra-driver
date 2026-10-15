@@ -79,6 +79,7 @@ featureGates: {}
 logVerbosity: "4"
 
 monitor:
+  # Requires NVIDIA Container Runtime as the node's default runtime to inject NVML.
   enabled: false
   resources: {}
 

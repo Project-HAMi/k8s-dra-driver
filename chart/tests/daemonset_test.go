@@ -3,10 +3,9 @@ package chart_test
 import (
 	"bytes"
 	"io"
-	"os"
 	"os/exec"
 	"path/filepath"
-	"strings"
+	"reflect"
 	"testing"
 
 	appsv1 "k8s.io/api/apps/v1"
@@ -40,7 +39,7 @@ func renderDaemonSet(t *testing.T, enabled, driverRoot, hookRoot string) appsv1.
 	}
 }
 
-func TestMonitorDriverLibrariesAndCacheMount(t *testing.T) {
+func TestMonitorRuntimeInjectionAndCacheMount(t *testing.T) {
 	for _, root := range []string{"/", "/run/nvidia/driver"} {
 		for _, hook := range []string{"/usr/local", "/var/lib/hami"} {
 			t.Run(root+hook, func(t *testing.T) {
@@ -58,8 +57,8 @@ func TestMonitorDriverLibrariesAndCacheMount(t *testing.T) {
 				for _, mount := range monitor.VolumeMounts {
 					mounted[mount.Name] = mount
 				}
-				if m := mounted["driver-root"]; m.MountPath != "/driver-root" || !m.ReadOnly || m.MountPropagation == nil || *m.MountPropagation != corev1.MountPropagationHostToContainer {
-					t.Fatalf("monitor needs read-only, propagated driver-root: %+v", m)
+				if _, found := mounted["driver-root"]; found {
+					t.Fatal("monitor must use runtime injection, not a driver-root mount")
 				}
 				if mounted["host-vgpu"].MountPath != "/usr/local/vgpu" {
 					t.Fatal("monitor cache mount must remain fixed inside the container")
@@ -76,34 +75,46 @@ func TestMonitorDriverLibrariesAndCacheMount(t *testing.T) {
 						}
 					}
 				}
-				if len(monitor.Command) != 2 || monitor.Command[0] != "bash" || len(monitor.Args) != 1 {
-					t.Fatal("monitor needs a library-discovery entrypoint")
+				if !reflect.DeepEqual(monitor.Command, []string{"vGPUmonitor"}) || len(monitor.Args) != 0 {
+					t.Fatal("monitor must run directly without a library preload wrapper")
 				}
-				// Execute the rendered entrypoint against a fixture driver root. Only
-				// the final exec is substituted: this checks the actual selection logic.
-				for _, dir := range []string{"usr/lib/x86_64-linux-gnu", "usr/lib/aarch64-linux-gnu", "usr/lib64", "usr/local/lib64"} {
-					t.Run(dir, func(t *testing.T) {
-						fixture := t.TempDir()
-						lib := filepath.Join(fixture, dir, "libnvidia-ml.so.1")
-						if err := os.MkdirAll(filepath.Dir(lib), 0755); err != nil {
-							t.Fatal(err)
-						}
-						if err := os.WriteFile(lib, nil, 0600); err != nil {
-							t.Fatal(err)
-						}
-						script := strings.ReplaceAll(monitor.Args[0], "/driver-root", fixture)
-						script = strings.ReplaceAll(script, "exec vGPUmonitor", `printf '%s' "$LD_PRELOAD"; exit 0`)
-						cmd := exec.Command("bash", "-ec", script)
-						cmd.Env = []string{"PATH=" + os.Getenv("PATH"), "LD_PRELOAD="}
-						out, err := cmd.CombinedOutput()
-						if err != nil || string(out) != lib {
-							t.Fatalf("NVML selection: %q, %v", out, err)
-						}
-					})
+				variables := map[string]string{}
+				for _, variable := range monitor.Env {
+					variables[variable.Name] = variable.Value
 				}
-				script := strings.ReplaceAll(monitor.Args[0], "/driver-root", t.TempDir())
-				if out, err := exec.Command("bash", "-ec", script).CombinedOutput(); err == nil || !strings.Contains(string(out), "libnvidia-ml.so.1") {
-					t.Fatalf("missing NVML must fail with an actionable error: %s, %v", out, err)
+				for name, want := range map[string]string{
+					"NVIDIA_VISIBLE_DEVICES": "all", "NVIDIA_DRIVER_CAPABILITIES": "utility",
+					"HOOK_PATH": "/usr/local/vgpu", "DRA_MODE": "true",
+				} {
+					if variables[name] != want {
+						t.Errorf("%s = %q, want %q", name, variables[name], want)
+					}
+				}
+				for _, name := range []string{"LD_PRELOAD", "LD_LIBRARY_PATH", "NVIDIA_DRIVER_ROOT"} {
+					if _, found := variables[name]; found {
+						t.Errorf("unexpected monitor library override %s", name)
+					}
+				}
+				// Runtime injection must stay disabled for the driver itself; its
+				// existing explicit driver-root loading remains unchanged.
+				for _, container := range ds.Spec.Template.Spec.Containers {
+					if container.Name != "gpus" {
+						continue
+					}
+					var visible, mountPath string
+					for _, variable := range container.Env {
+						if variable.Name == "NVIDIA_VISIBLE_DEVICES" {
+							visible = variable.Value
+						}
+					}
+					for _, mount := range container.VolumeMounts {
+						if mount.Name == "driver-root" {
+							mountPath = mount.MountPath
+						}
+					}
+					if visible != "void" || mountPath != "/driver-root" {
+						t.Fatal("driver library loading changed")
+					}
 				}
 			})
 		}
