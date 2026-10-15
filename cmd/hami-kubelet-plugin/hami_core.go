@@ -338,7 +338,7 @@ func (m *HAMiCoreManager) resolveClaimToPod(claim *resourceapi.ResourceClaim) (*
 // in the patch protect against Pod replacement and concurrent metadata changes.
 func (m *HAMiCoreManager) ensurePodMonitorLabel(ctx context.Context, pod *corev1.Pod) error {
 	if m.clientset == nil || m.nodeName == "" {
-		return fmt.Errorf("Pod client and node name are required for vGPUmonitor labeling")
+		return fmt.Errorf("pod client and node name are required for vGPUmonitor labeling")
 	}
 	err := retry.RetryOnConflict(retry.DefaultBackoff, func() error {
 		live, err := m.clientset.CoreV1().Pods(pod.Namespace).Get(ctx, pod.Name, metav1.GetOptions{})
@@ -346,10 +346,10 @@ func (m *HAMiCoreManager) ensurePodMonitorLabel(ctx context.Context, pod *corev1
 			return err
 		}
 		if live.UID != pod.UID {
-			return fmt.Errorf("Pod UID changed from %s to %s", pod.UID, live.UID)
+			return fmt.Errorf("pod UID changed from %s to %s", pod.UID, live.UID)
 		}
 		if live.Spec.NodeName != m.nodeName {
-			return fmt.Errorf("Pod is assigned to node %q, not %q", live.Spec.NodeName, m.nodeName)
+			return fmt.Errorf("pod is assigned to node %q, not %q", live.Spec.NodeName, m.nodeName)
 		}
 		if current := live.Labels[hamiMonitorNodeLabel]; current != "" {
 			if current != m.nodeName {
