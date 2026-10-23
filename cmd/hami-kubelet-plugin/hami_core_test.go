@@ -69,6 +69,132 @@ func TestGetCDIContainerEditsLabelsPodForMonitor(t *testing.T) {
 	require.Equal(t, "workload", got.Labels["app"])
 }
 
+func TestGetCDIContainerEditsCacheMissUsesLivePod(t *testing.T) {
+	for _, template := range []bool{false, true} {
+		name := "direct"
+		if template {
+			name = "template init container"
+		}
+		t.Run(name, func(t *testing.T) {
+			pod := &corev1.Pod{
+				ObjectMeta: metav1.ObjectMeta{Namespace: "default", Name: "pod", UID: "pod-uid"},
+				Spec: corev1.PodSpec{NodeName: "node-a",
+					ResourceClaims: []corev1.PodResourceClaim{{Name: "gpu", ResourceClaimName: ptr.To("gpu-claim")}},
+					Containers: []corev1.Container{{Name: "workload", Resources: corev1.ResourceRequirements{
+						Claims: []corev1.ResourceClaim{{Name: "gpu"}},
+					}}},
+				},
+			}
+			if template {
+				pod.Spec.ResourceClaims = []corev1.PodResourceClaim{{Name: "gpu", ResourceClaimTemplateName: ptr.To("gpu-template")}}
+				pod.Status.ResourceClaimStatuses = []corev1.PodResourceClaimStatus{{Name: "gpu", ResourceClaimName: ptr.To("gpu-claim")}}
+				pod.Spec.InitContainers, pod.Spec.Containers = pod.Spec.Containers, nil
+			}
+			client := fake.NewClientset(pod)
+			manager := managerWithPods(t) // informer has not observed the Pod yet
+			manager.clientset, manager.nodeName = client, "node-a"
+			manager.containerHookPath, manager.hostHookPath = t.TempDir(), t.TempDir()
+			claim := newResourceClaim("gpu-claim", []resourceapi.ResourceClaimConsumerReference{{Resource: "pods", Name: pod.Name, UID: pod.UID}})
+			edits, err := manager.GetCDIContainerEdits(context.Background(), claim, nil)
+			require.NoError(t, err)
+			require.Contains(t, edits.Env, "CUDA_DEVICE_MEMORY_SHARED_CACHE="+filepath.Join(manager.containerHookPath, "vgpu", "containers", "pod-uid_workload", "claim-uid.cache"))
+			got, err := client.CoreV1().Pods(pod.Namespace).Get(context.Background(), pod.Name, metav1.GetOptions{})
+			require.NoError(t, err)
+			require.Equal(t, "node-a", got.Labels[hamiMonitorNodeLabel])
+			require.NoDirExists(t, filepath.Join(manager.containerHookPath, "vgpu", "containers", "claim-uid_unknown"))
+		})
+	}
+}
+
+func TestGetCDIContainerEditsCacheMissFailsWithoutSideEffects(t *testing.T) {
+	for _, tc := range []struct {
+		name      string
+		mutate    func(*corev1.Pod)
+		missing   bool
+		getError  error
+		wantError string
+	}{
+		{name: "Pod absent", missing: true, wantError: "not found"},
+		{name: "replacement Pod", mutate: func(p *corev1.Pod) { p.UID = "other-uid" }, wantError: "does not match claim consumer UID"},
+		{name: "wrong node", mutate: func(p *corev1.Pod) { p.Spec.NodeName = "node-b" }, wantError: "assigned to node"},
+		{name: "unbound Pod", mutate: func(p *corev1.Pod) { p.Spec.NodeName = "" }, wantError: "assigned to node"},
+		{name: "missing claim alias", mutate: func(p *corev1.Pod) { p.Spec.ResourceClaims = nil }, wantError: "does not reference ResourceClaim"},
+		{name: "missing container", mutate: func(p *corev1.Pod) { p.Spec.Containers = nil }, wantError: "no container"},
+		{name: "API unavailable", getError: apierrors.NewServiceUnavailable("try again"), wantError: "try again"},
+		{name: "API forbidden", getError: apierrors.NewForbidden(schema.GroupResource{Resource: "pods"}, "pod", errors.New("test denied")), wantError: "forbidden"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			pod := &corev1.Pod{
+				ObjectMeta: metav1.ObjectMeta{Namespace: "default", Name: "pod", UID: "pod-uid"},
+				Spec: corev1.PodSpec{NodeName: "node-a",
+					ResourceClaims: []corev1.PodResourceClaim{{Name: "gpu", ResourceClaimName: ptr.To("gpu-claim")}},
+					Containers: []corev1.Container{{Name: "workload", Resources: corev1.ResourceRequirements{
+						Claims: []corev1.ResourceClaim{{Name: "gpu"}},
+					}}},
+				},
+			}
+			if tc.mutate != nil {
+				tc.mutate(pod)
+			}
+			client := fake.NewClientset()
+			if !tc.missing {
+				_, err := client.CoreV1().Pods(pod.Namespace).Create(context.Background(), pod, metav1.CreateOptions{})
+				require.NoError(t, err)
+			}
+			if tc.getError != nil {
+				client.PrependReactor("get", "pods", func(clienttesting.Action) (bool, runtime.Object, error) {
+					return true, nil, tc.getError
+				})
+			}
+			manager := managerWithPods(t)
+			manager.clientset, manager.nodeName = client, "node-a"
+			manager.containerHookPath, manager.hostHookPath = t.TempDir(), t.TempDir()
+			claim := newResourceClaim("gpu-claim", []resourceapi.ResourceClaimConsumerReference{{Resource: "pods", Name: "pod", UID: "pod-uid"}})
+			edits, err := manager.GetCDIContainerEdits(context.Background(), claim, nil)
+			require.ErrorContains(t, err, tc.wantError)
+			if tc.getError != nil {
+				require.ErrorIs(t, err, tc.getError)
+			}
+			require.Nil(t, edits)
+			require.NoDirExists(t, filepath.Join(manager.containerHookPath, "vgpu", "containers"))
+			for _, action := range client.Actions() {
+				require.NotEqual(t, "patch", action.GetVerb(), "failed resolution must not label a Pod")
+			}
+		})
+	}
+}
+
+func TestGetCDIContainerEditsCacheMissCanRetry(t *testing.T) {
+	client := fake.NewClientset()
+	manager := managerWithPods(t)
+	manager.clientset, manager.nodeName = client, "node-a"
+	manager.containerHookPath, manager.hostHookPath = t.TempDir(), t.TempDir()
+	claim := newResourceClaim("gpu-claim", []resourceapi.ResourceClaimConsumerReference{{Resource: "pods", Name: "pod", UID: "pod-uid"}})
+	edits, err := manager.GetCDIContainerEdits(context.Background(), claim, nil)
+	require.Error(t, err)
+	require.Nil(t, edits)
+	require.True(t, apierrors.IsNotFound(err))
+	require.NoDirExists(t, filepath.Join(manager.containerHookPath, "vgpu", "containers"))
+	pod := &corev1.Pod{
+		ObjectMeta: metav1.ObjectMeta{Namespace: "default", Name: "pod", UID: "pod-uid"},
+		Spec: corev1.PodSpec{NodeName: "node-a",
+			ResourceClaims: []corev1.PodResourceClaim{{Name: "gpu", ResourceClaimName: ptr.To("gpu-claim")}},
+			Containers: []corev1.Container{{Name: "workload", Resources: corev1.ResourceRequirements{
+				Claims: []corev1.ResourceClaim{{Name: "gpu"}},
+			}}},
+		},
+	}
+	_, err = client.CoreV1().Pods(pod.Namespace).Create(context.Background(), pod, metav1.CreateOptions{})
+	require.NoError(t, err)
+	// Retry before the informer catches up: the API now has the correct Pod.
+	edits, err = manager.GetCDIContainerEdits(context.Background(), claim, nil)
+	require.NoError(t, err)
+	require.Contains(t, edits.Env, "CUDA_DEVICE_MEMORY_SHARED_CACHE="+filepath.Join(manager.containerHookPath, "vgpu", "containers", "pod-uid_workload", "claim-uid.cache"))
+	got, err := client.CoreV1().Pods(pod.Namespace).Get(context.Background(), pod.Name, metav1.GetOptions{})
+	require.NoError(t, err)
+	require.Equal(t, "node-a", got.Labels[hamiMonitorNodeLabel])
+}
+
 func TestGetCDIContainerEditsMonitorLabelSafety(t *testing.T) {
 	for _, tc := range []struct {
 		name        string
@@ -352,6 +478,7 @@ func TestResolveClaimToPod(t *testing.T) {
 					UID:       types.UID("pod-uid"),
 				},
 				Spec: corev1.PodSpec{
+					NodeName:       "node-a",
 					ResourceClaims: []corev1.PodResourceClaim{tt.podClaim},
 					Containers:     tt.containers,
 					InitContainers: tt.initContainers,
@@ -364,7 +491,7 @@ func TestResolveClaimToPod(t *testing.T) {
 			if err := indexer.Add(pod); err != nil {
 				t.Fatalf("add Pod to indexer: %v", err)
 			}
-			manager := &HAMiCoreManager{podLister: corelisters.NewPodLister(indexer)}
+			manager := &HAMiCoreManager{podLister: corelisters.NewPodLister(indexer), nodeName: "node-a"}
 			claim := &resourceapi.ResourceClaim{
 				ObjectMeta: metav1.ObjectMeta{
 					Namespace: "default",
@@ -378,7 +505,7 @@ func TestResolveClaimToPod(t *testing.T) {
 				}}},
 			}
 
-			gotPod, gotContainer, err := manager.resolveClaimToPod(claim)
+			gotPod, gotContainer, err := manager.resolveClaimToPod(context.Background(), claim)
 			if err != nil {
 				t.Fatalf("resolveClaimToPod() error = %v", err)
 			}
@@ -400,6 +527,7 @@ func TestResolveClaimToPodErrors(t *testing.T) {
 			UID:       types.UID("pod-uid"),
 		},
 		Spec: corev1.PodSpec{
+			NodeName: "node-a",
 			ResourceClaims: []corev1.PodResourceClaim{{
 				Name:              "gpu",
 				ResourceClaimName: ptr.To("gpu-claim"),
@@ -487,7 +615,7 @@ func TestResolveClaimToPodErrors(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			_, _, err := tt.manager.resolveClaimToPod(tt.claim)
+			_, _, err := tt.manager.resolveClaimToPod(context.Background(), tt.claim)
 			if err == nil {
 				t.Fatalf("resolveClaimToPod() error = nil, want error containing %q", tt.wantErrorText)
 			}
@@ -519,6 +647,7 @@ func TestGetCDIContainerEditsCachePath(t *testing.T) {
 			}},
 		},
 	}
+	pod.Spec.NodeName = "node-a"
 	manager := managerWithPods(t, pod)
 	manager.hostHookPath = "/var/lib/hami"
 	manager.containerHookPath = hostHookPath
@@ -682,7 +811,7 @@ func managerWithPods(t *testing.T, pods ...*corev1.Pod) *HAMiCoreManager {
 			t.Fatalf("add Pod to indexer: %v", err)
 		}
 	}
-	return &HAMiCoreManager{podLister: corelisters.NewPodLister(indexer)}
+	return &HAMiCoreManager{podLister: corelisters.NewPodLister(indexer), nodeName: "node-a"}
 }
 
 func newResourceClaim(name string, reservedFor []resourceapi.ResourceClaimConsumerReference) *resourceapi.ResourceClaim {

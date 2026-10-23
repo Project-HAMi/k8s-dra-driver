@@ -60,10 +60,17 @@ RBAC must grant the same permissions before upgrading the driver.
 
 Only that label is patched, with Pod UID and resource-version guards. An
 existing matching label is accepted; a conflicting label, wrong-node Pod, or
-API error fails preparation before cache edits for a resolved Pod. The label
-is retained until Pod deletion because other claims or containers may still
-need it. This is legacy-monitor compatibility, not label-independent DRA
+API error fails preparation before cache edits. A Pod informer cache miss
+falls back to a live API lookup, validating the reserving Pod's UID and node
+before resolving its claim/container mapping. If resolution still fails,
+preparation returns an error so kubelet can retry; it no longer creates a
+claim-scoped `unknown` cache directory. The label is retained until Pod deletion
+because other claims or containers may still need it. This is legacy-monitor
+compatibility, not label-independent DRA
 support. The monitor still requires NVIDIA runtime library injection.
+
+Workloads previously prepared with an `unknown` cache are not migrated
+automatically; recreate affected workloads through normal cleanup/preparation.
 
 ## Building the image with vGPUMonitor
 

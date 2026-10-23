@@ -31,6 +31,7 @@ import (
 
 	corev1 "k8s.io/api/core/v1"
 	resourceapi "k8s.io/api/resource/v1"
+	apierrors "k8s.io/apimachinery/pkg/api/errors"
 	"k8s.io/apimachinery/pkg/api/resource"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/types"
@@ -290,10 +291,10 @@ func containerNameForPodClaimAlias(containers []corev1.Container, claimAlias str
 	return ""
 }
 
-// resolveClaimToPod searches the local Pod informer cache for the Pod that
-// reserved the given claim.  HAMi DRA guarantees a 1:1 claim-to-container
-// binding, so it also returns the exact container name.
-func (m *HAMiCoreManager) resolveClaimToPod(claim *resourceapi.ResourceClaim) (*corev1.Pod, string, error) {
+// resolveClaimToPod searches the local Pod informer cache, falling back to a
+// live lookup on a cache miss. Validate the reserving Pod's UID and node before
+// mapping the claim to its regular or init container.
+func (m *HAMiCoreManager) resolveClaimToPod(ctx context.Context, claim *resourceapi.ResourceClaim) (*corev1.Pod, string, error) {
 	if m.podLister == nil {
 		return nil, "", fmt.Errorf("pod lister not initialized")
 	}
@@ -308,11 +309,20 @@ func (m *HAMiCoreManager) resolveClaimToPod(claim *resourceapi.ResourceClaim) (*
 	}
 
 	pod, err := m.podLister.Pods(claim.Namespace).Get(consumer.Name)
+	if apierrors.IsNotFound(err) && m.clientset != nil {
+		pod, err = m.clientset.CoreV1().Pods(claim.Namespace).Get(ctx, consumer.Name, metav1.GetOptions{})
+		if err != nil {
+			return nil, "", fmt.Errorf("get pod %s/%s after local cache miss: %w", claim.Namespace, consumer.Name, err)
+		}
+	}
 	if err != nil {
 		return nil, "", fmt.Errorf("pod %s/%s not found in local cache: %w", claim.Namespace, consumer.Name, err)
 	}
 	if pod.UID != consumer.UID {
 		return nil, "", fmt.Errorf("pod %s/%s UID %s does not match claim consumer UID %s", claim.Namespace, consumer.Name, pod.UID, consumer.UID)
+	}
+	if m.nodeName == "" || pod.Spec.NodeName != m.nodeName {
+		return nil, "", fmt.Errorf("pod %s/%s is assigned to node %q, not %q", claim.Namespace, consumer.Name, pod.Spec.NodeName, m.nodeName)
 	}
 
 	claimAlias, err := podClaimAliasForResourceClaim(pod, claim.Name)
@@ -376,15 +386,11 @@ func (m *HAMiCoreManager) ensurePodMonitorLabel(ctx context.Context, pod *corev1
 }
 
 func (m *HAMiCoreManager) GetCDIContainerEdits(ctx context.Context, claim *resourceapi.ResourceClaim, devs AllocatableDevices) (*cdiapi.ContainerEdits, error) {
-	pod, containerName, err := m.resolveClaimToPod(claim)
+	pod, containerName, err := m.resolveClaimToPod(ctx, claim)
 	if err != nil {
-		klog.Warningf("HAMiCoreManager: cannot resolve claim %s to pod/container: %v", claim.UID, err)
-		// Fallback to claim-scoped directory so that Prepare does not hard-fail.
-		// Metrics will be incomplete, but the workload can still run.
-		pod = &corev1.Pod{}
-		pod.UID = claim.UID
-		containerName = "unknown"
-	} else if err := m.ensurePodMonitorLabel(ctx, pod); err != nil {
+		return nil, fmt.Errorf("resolve claim %s to pod/container: %w", claim.UID, err)
+	}
+	if err := m.ensurePodMonitorLabel(ctx, pod); err != nil {
 		// Do not alter cache directories or return successful preparation when
 		// a resolved workload cannot be made discoverable by the monitor.
 		return nil, err
