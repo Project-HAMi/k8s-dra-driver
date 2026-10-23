@@ -514,7 +514,20 @@ func (m *HAMiCoreManager) GetCDIContainerEdits(ctx context.Context, claim *resou
 	}, nil
 }
 
+// Unprepare removes cache state at claim release or abandoned preparation, not
+// at startup or during layout migration: legacy mounts may still be in use.
 func (m *HAMiCoreManager) Unprepare(claimUID string, pl PreparedDeviceList) error {
+	if !filepath.IsLocal(claimUID) || filepath.Base(claimUID) != claimUID || claimUID == "." {
+		return fmt.Errorf("invalid claim UID %q for cache cleanup", claimUID)
+	}
+
+	// Completed pre-upgrade claims retain their original CDI cache mounts.
+	// Remove only this claim's legacy path, even if containers/ does not exist.
+	legacyDirectory := filepath.Join(m.containerHookPath, "vgpu", "claims", claimUID)
+	if err := os.RemoveAll(legacyDirectory); err != nil {
+		return fmt.Errorf("remove legacy claim cache directory %s: %w", legacyDirectory, err)
+	}
+
 	containersPath := filepath.Join(m.containerHookPath, "vgpu", "containers")
 	entries, err := os.ReadDir(containersPath)
 	if err != nil {

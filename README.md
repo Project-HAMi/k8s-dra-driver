@@ -87,6 +87,20 @@ or claim cache are not deleted blindly; pre-existing unmarked orphans cannot be
 attributed safely. Cache setup and ownership inspection failures are returned
 as errors rather than reported as successful preparation/cleanup.
 
+On upgrade, completed claims keep their existing CDI mounts and legacy
+`/usr/local/vgpu/claims/<claimUID>/` caches. Startup, checkpoint migration and
+idempotent Prepare do not sweep or relocate these directories. Unprepare removes
+only the released claim's legacy directory as well as its owned new-layout
+directories, even if the new `containers/` root is absent. Cleanup errors retain
+the checkpoint for retry.
+
+The safety boundary is kubelet's claim-release request: kubelet stops consuming
+containers before Unprepare and defers it while another local Pod still uses
+the claim. Pod API status can lag that release, so cleanup does not depend on
+the Pod being absent or its phase already being terminal. Failed preparations
+can also be cleaned up through the existing explicit/stale-claim Unprepare path;
+there is no new legacy-directory garbage collector.
+
 ## Building the image with vGPUMonitor
 
 `make build` and `make cmds` build this repository's Go code only. `make image`
