@@ -25,6 +25,7 @@ import (
 	"strings"
 	"sync"
 	"testing"
+	"testing/synctest"
 	"time"
 
 	"github.com/stretchr/testify/require"
@@ -43,6 +44,102 @@ import (
 	"k8s.io/client-go/tools/cache"
 	"k8s.io/utils/ptr"
 )
+
+func TestHAMiCorePodCacheSyncAtStartup(t *testing.T) {
+	for _, tc := range []struct {
+		name          string
+		synced        bool
+		parentTimeout time.Duration
+		cancelBefore  bool
+		cancelAfter   time.Duration
+		wantElapsed   time.Duration
+		wantErr       error
+	}{
+		{name: "already synced", synced: true, parentTimeout: time.Minute},
+		{name: "timeout is best effort", parentTimeout: time.Minute, wantElapsed: 30 * time.Second},
+		{name: "already canceled", parentTimeout: time.Minute, cancelBefore: true, wantErr: context.Canceled},
+		{name: "canceled while waiting", parentTimeout: time.Minute, cancelAfter: time.Second, wantElapsed: time.Second, wantErr: context.Canceled},
+		{name: "parent deadline", parentTimeout: 2 * time.Second, wantElapsed: 2 * time.Second, wantErr: context.DeadlineExceeded},
+		{name: "cancellation wins over synced cache", synced: true, parentTimeout: time.Minute, cancelBefore: true, wantErr: context.Canceled},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			synctest.Test(t, func(t *testing.T) {
+				manager := &HAMiCoreManager{
+					podListerSynced: func() bool { return tc.synced },
+					stopCh:          make(chan struct{}),
+				}
+				defer manager.Stop()
+				ctx, cancel := context.WithTimeout(context.Background(), tc.parentTimeout)
+				defer cancel()
+				if tc.cancelBefore {
+					cancel()
+				}
+				if tc.cancelAfter > 0 {
+					time.AfterFunc(tc.cancelAfter, cancel)
+				}
+
+				started := time.Now()
+				err := manager.waitForPodCacheSyncAtStartup(ctx)
+				require.Equal(t, tc.wantElapsed, time.Since(started))
+				if tc.wantErr != nil {
+					require.ErrorIs(t, err, tc.wantErr)
+					select {
+					case <-manager.stopCh:
+					default:
+						t.Fatal("canceled startup did not stop the informer")
+					}
+					return
+				}
+				require.NoError(t, err)
+				require.NoError(t, ctx.Err(), "startup wait must not cancel the process context")
+				select {
+				case <-manager.stopCh:
+					t.Fatal("best-effort synchronization must leave the informer running")
+				default:
+				}
+			})
+		})
+	}
+}
+
+func TestHAMiCorePodCacheSyncTimeoutAllowsLiveLookup(t *testing.T) {
+	synctest.Test(t, func(t *testing.T) {
+		pod := &corev1.Pod{
+			ObjectMeta: metav1.ObjectMeta{Namespace: "default", Name: "pod", UID: "pod-uid"},
+			Spec: corev1.PodSpec{
+				NodeName:       "node-a",
+				ResourceClaims: []corev1.PodResourceClaim{{Name: "gpu", ResourceClaimName: ptr.To("gpu-claim")}},
+				Containers: []corev1.Container{{Name: "workload", Resources: corev1.ResourceRequirements{
+					Claims: []corev1.ResourceClaim{{Name: "gpu"}},
+				}}},
+			},
+		}
+		manager := managerWithPods(t) // the cache never receives the live Pod
+		manager.clientset = fake.NewClientset(pod)
+		manager.stopCh = make(chan struct{})
+		synced := false
+		manager.podListerSynced = func() bool { return synced }
+		defer manager.Stop()
+		ctx, cancel := context.WithTimeout(context.Background(), time.Minute)
+		defer cancel()
+
+		started := time.Now()
+		require.NoError(t, manager.waitForPodCacheSyncAtStartup(ctx))
+		require.Equal(t, 30*time.Second, time.Since(started))
+		claim := newResourceClaim("gpu-claim", []resourceapi.ResourceClaimConsumerReference{{Resource: "pods", Name: pod.Name, UID: pod.UID}})
+		resolved, container, err := manager.resolveClaimToPod(ctx, claim)
+		require.NoError(t, err)
+		require.Equal(t, pod.UID, resolved.UID)
+		require.Equal(t, "workload", container)
+		select {
+		case <-manager.stopCh:
+			t.Fatal("startup timeout stopped the informer")
+		default:
+		}
+		synced = true
+		require.True(t, manager.WaitForPodCacheSync(ctx), "cache may synchronize after startup continues")
+	})
+}
 
 func TestHAMiCoreManagerStopWaitsForInformer(t *testing.T) {
 	pod := &corev1.Pod{

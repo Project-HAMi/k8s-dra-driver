@@ -69,6 +69,11 @@ because other claims or containers may still need it. This is legacy-monitor
 compatibility, not label-independent DRA
 support. The monitor still requires NVIDIA runtime library injection.
 
+Driver startup waits at most 30 seconds for the Pod informer's initial sync.
+On timeout, startup continues with live Pod lookups while the informer keeps
+retrying. Process cancellation stops the informer and aborts startup; API lookup
+and labeling failures still fail preparation rather than bypassing monitoring.
+
 Workloads previously prepared with an `unknown` cache are not migrated
 automatically; recreate affected workloads through normal cleanup/preparation.
 

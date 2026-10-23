@@ -105,6 +105,7 @@ This section defines the architectural agents within the project for SDD.
         *   Retains the Pod's node label until Pod deletion, because another claim/container in the Pod may still need monitoring. HAMi-Core preparation requires `get` and `patch` access to Pods even if the optional monitor sidecar is disabled; custom RBAC must grant these permissions.
     *   Defines `HAMiGpuDeviceType` (`hami-gpu`) constant and `PreparedHAMiGpu` type for tracking prepared HAMi-Core allocations.
     *   `Stop` closes the Pod informer stop channel once, then calls the informer factory's `Shutdown` to await worker/event-handler termination. Repeated or concurrent calls wait for the same shutdown; managers without an informer are safe to stop.
+    *   Startup waits up to 30 seconds for the Pod informer cache to sync. Timeout is best-effort: the informer keeps retrying and preparation can use live Pod lookups. Process-context cancellation stops and joins the informer and aborts startup; live lookup and labeling errors still fail preparation.
 *   **Constraints:**
     *   `featuregates.HAMiCoreSupport` is mutually exclusive with `TimeSlicingSettings`, `MPSSupport`, `PassthroughSupport`, `DynamicMIG`, and `ComputeDomainCliques`.
     *   `SDD Interface:` Must support mapping arbitrary capacity requests to specific vendor-neutral CDI specifications.

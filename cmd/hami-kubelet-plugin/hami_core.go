@@ -251,6 +251,24 @@ func (m *HAMiCoreManager) WaitForPodCacheSync(ctx context.Context) bool {
 	return cache.WaitForCacheSync(ctx.Done(), m.podListerSynced)
 }
 
+// waitForPodCacheSyncAtStartup bounds the best-effort wait without stopping the
+// informer on timeout. Process cancellation instead stops it and aborts startup.
+func (m *HAMiCoreManager) waitForPodCacheSyncAtStartup(ctx context.Context) error {
+	const timeout = 30 * time.Second
+	syncCtx, cancel := context.WithTimeout(ctx, timeout)
+	defer cancel()
+
+	synced := m.WaitForPodCacheSync(syncCtx)
+	if err := ctx.Err(); err != nil {
+		m.Stop()
+		return err
+	}
+	if !synced {
+		klog.Warningf("HAMiCoreManager Pod cache did not sync within %s; continuing with live API lookups while the informer retries", timeout)
+	}
+	return nil
+}
+
 // Stop signals the informer to stop and waits for its workers and handlers.
 // All callers, including concurrent/repeated calls, wait for the same shutdown.
 func (m *HAMiCoreManager) Stop() {
