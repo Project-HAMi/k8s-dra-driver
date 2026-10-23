@@ -61,11 +61,13 @@ type Flags struct {
 	healthcheckPort               int
 	klogVerbosity                 int
 	additionalXidsToIgnore        string
+	preConfiguredDeviceMemory     string
 }
 
 type Config struct {
-	flags      *Flags
-	clientsets pkgflags.ClientSets
+	deviceMemoryBytes uint64
+	flags             *Flags
+	clientsets        pkgflags.ClientSets
 }
 
 func (c Config) DriverPluginPath() string {
@@ -85,6 +87,13 @@ func newApp() *cli.App {
 	flags := &Flags{}
 
 	cliFlags := []cli.Flag{
+		&cli.StringFlag{
+			Name:        "pre-configured-device-memory",
+			Usage:       "Default HAMi-Core fallback memory budget (Kubernetes Quantity, rounded up to 1 MiB).",
+			Value:       "0",
+			Destination: &flags.preConfiguredDeviceMemory,
+			EnvVars:     []string{"PRE_CONFIGURED_DEVICE_MEMORY"},
+		},
 		&cli.StringFlag{
 			Name:        "node-name",
 			Usage:       "The name of the node to be worked on.",
@@ -208,12 +217,10 @@ func newApp() *cli.App {
 				return fmt.Errorf("create client: %w", err)
 			}
 
-			config := &Config{
+			return RunPlugin(c.Context, &Config{
 				flags:      flags,
 				clientsets: clientSets,
-			}
-
-			return RunPlugin(c.Context, config)
+			})
 		},
 		After: func(c *cli.Context) error {
 			// Runs after `Action` (regardless of success/error). In urfave cli
@@ -238,6 +245,13 @@ func newApp() *cli.App {
 
 // RunPlugin initializes and runs the GPU kubelet plugin.
 func RunPlugin(ctx context.Context, config *Config) error {
+	ctx, cancel := signal.NotifyContext(ctx, syscall.SIGHUP, syscall.SIGINT, syscall.SIGTERM, syscall.SIGQUIT)
+	defer cancel()
+
+	if err := config.loadDeviceMemoryBudget(ctx, featuregates.Enabled(featuregates.HAMiCoreSupport)); err != nil {
+		return err
+	}
+
 	common.StartDebugSignalHandlers()
 
 	// Create the plugin directory
@@ -264,9 +278,6 @@ func RunPlugin(ctx context.Context, config *Config) error {
 	case !info.IsDir():
 		return fmt.Errorf("path for cdi file generation is not a directory: '%v'", config.flags.cdiRoot)
 	}
-
-	ctx, cancel := signal.NotifyContext(ctx, syscall.SIGHUP, syscall.SIGINT, syscall.SIGTERM, syscall.SIGQUIT)
-	defer cancel()
 
 	// Create and start the driver
 	driver, err := NewDriver(ctx, config)

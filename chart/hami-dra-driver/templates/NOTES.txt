@@ -1,0 +1,13 @@
+With HAMiCoreSupport enabled, driver.preConfiguredDeviceMemory supplies a fallback
+budget for GPUs such as GB10 when NVML returns ERROR_NOT_SUPPORTED.
+Use Kubernetes Quantity strings such as "64Gi" or "65536Mi". The driver rounds
+positive values up to a whole MiB and logs the requested and effective capacity.
+The default "0" disables fallback, so ERROR_NOT_SUPPORTED stops device discovery.
+
+Set a per-Node budget with the following command.
+
+  kubectl annotate node <node-name> hami.io/default-device-memory=64Gi --overwrite
+
+The annotation takes precedence, including when set to "0". The driver reads it
+at startup. Custom RBAC must grant nodes/get. Release affected claims before
+changing the budget, then restart the affected plugin Pod.

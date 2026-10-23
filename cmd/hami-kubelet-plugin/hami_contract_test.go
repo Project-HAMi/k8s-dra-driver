@@ -371,23 +371,49 @@ func TestHAMiPrepareResumesStartedClaim(t *testing.T) {
 }
 
 func TestHAMiUnprepareRemovesClaimState(t *testing.T) {
-	ctx := context.Background()
-	claim := testHAMiClaim(t, "uid-a", 30, "4Gi")
-	s := newTestPrepareDeviceState(t, claim)
-	_, err := s.Prepare(ctx, claim)
-	require.NoError(t, err)
+	for _, tc := range []struct {
+		name       string
+		skipDevice bool
+	}{
+		{name: "device still advertised"},
+		{name: "device missing after rediscovery", skipDevice: true},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			ctx := context.Background()
+			claim := testHAMiClaim(t, "uid-a", 30, "4Gi")
+			s := newTestPrepareDeviceState(t, claim)
+			_, err := s.Prepare(ctx, claim)
+			require.NoError(t, err)
 
-	ref := kubeletplugin.NamespacedObject{
-		UID:            claim.UID,
-		NamespacedName: types.NamespacedName{Namespace: claim.Namespace, Name: claim.Name},
+			if tc.skipDevice {
+				clear(s.allocatable)
+			}
+			uid := string(claim.UID)
+			cp, err := s.getCheckpoint(ctx)
+			require.NoError(t, err)
+			require.Equal(t, ClaimCheckpointStatePrepareCompleted, cp.V2.PreparedClaims[uid].CheckpointState)
+			edits := claimDeviceEdits(t, s, uid)
+			const cacheEnv = "CUDA_DEVICE_MEMORY_SHARED_CACHE="
+			index := slices.IndexFunc(edits.Env, func(env string) bool { return strings.HasPrefix(env, cacheEnv) })
+			require.NotEqual(t, -1, index, "prepared CDI spec must contain the cache path")
+			cachePath := strings.TrimPrefix(edits.Env[index], cacheEnv)
+			require.NotEmpty(t, cachePath)
+			cacheDir := filepath.Dir(cachePath)
+			require.DirExists(t, cacheDir)
+
+			ref := kubeletplugin.NamespacedObject{
+				UID:            claim.UID,
+				NamespacedName: types.NamespacedName{Namespace: claim.Namespace, Name: claim.Name},
+			}
+			require.NoError(t, s.Unprepare(ctx, ref))
+			require.NoDirExists(t, cacheDir)
+			require.NoFileExists(t, claimSpecPath(s, uid))
+			cp, err = s.getCheckpoint(ctx)
+			require.NoError(t, err)
+			require.NotContains(t, cp.V2.PreparedClaims, uid)
+
+			// The kubelet may repeat Unprepare.
+			require.NoError(t, s.Unprepare(ctx, ref))
+		})
 	}
-	require.NoError(t, s.Unprepare(ctx, ref))
-
-	require.NoFileExists(t, claimSpecPath(s, "uid-a"))
-	cp, err := s.getCheckpoint(ctx)
-	require.NoError(t, err)
-	require.NotContains(t, cp.V2.PreparedClaims, "uid-a")
-
-	// The kubelet may repeat Unprepare.
-	require.NoError(t, s.Unprepare(ctx, ref))
 }

@@ -35,6 +35,7 @@ static int nvmlAddressingModeAvailable() {
 import "C"
 
 import (
+	"errors"
 	"fmt"
 	"maps"
 	"os"
@@ -57,7 +58,10 @@ import (
 	"github.com/Project-HAMi/k8s-dra-driver/pkg/featuregates"
 )
 
+var errDeviceMemoryUnavailable = errors.New("device memory unavailable")
+
 type deviceLib struct {
+	deviceMemoryBytes uint64
 	nvdev.Interface
 	nvmllib           nvml.Interface
 	nvpci             nvpci.Interface
@@ -72,7 +76,7 @@ type deviceLib struct {
 type GPUMinor = int
 type PerGPUMinorAllocatableDevices map[GPUMinor]AllocatableDevices
 
-func newDeviceLib(driverRoot root) (*deviceLib, error) {
+func newDeviceLib(driverRoot root, deviceMemoryBytes uint64) (*deviceLib, error) {
 	driverLibraryPath, err := driverRoot.getDriverLibraryPath()
 	if err != nil {
 		return nil, fmt.Errorf("failed to locate driver libraries: %w", err)
@@ -91,6 +95,7 @@ func newDeviceLib(driverRoot root) (*deviceLib, error) {
 	nvpci := nvpci.New()
 
 	d := deviceLib{
+		deviceMemoryBytes: deviceMemoryBytes,
 		Interface:         nvdev.New(nvmllib),
 		nvmllib:           nvmllib,
 		driverLibraryPath: driverLibraryPath,
@@ -241,6 +246,10 @@ func (l deviceLib) GetPerGpuAllocatableDevices(indices ...int) (PerGPUMinorAlloc
 		thisGPUAllocatable := make(AllocatableDevices)
 
 		gpuInfo, err := l.getGpuInfo(i, d)
+		if errors.Is(err, errDeviceMemoryUnavailable) {
+			klog.Warningf("Skipping GPU %d: %v", i, err)
+			return nil
+		}
 		if err != nil {
 			return fmt.Errorf("error getting info for GPU %v: %w", i, err)
 		}
@@ -466,7 +475,14 @@ func (l deviceLib) getGpuInfo(index int, device nvdev.Device) (*GpuInfo, error) 
 	}
 	memory, ret := device.GetMemoryInfo()
 	if ret != nvml.SUCCESS {
-		return nil, fmt.Errorf("error getting memory info for device %d: %v", index, ret)
+		if ret != nvml.ERROR_NOT_SUPPORTED || l.deviceMemoryBytes == 0 || !featuregates.Enabled(featuregates.HAMiCoreSupport) {
+			return nil, fmt.Errorf("error getting memory info for device %d: %w", index, ret)
+		}
+		if migEnabled {
+			return nil, fmt.Errorf("GPU %d (%s): %w (NVML=%v fallbackBytes=%d migEnabled=%t)", index, uuid, errDeviceMemoryUnavailable, ret, l.deviceMemoryBytes, migEnabled)
+		}
+		memory.Total = l.deviceMemoryBytes
+		klog.Warningf("Using HAMi-Core memory fallback for GPU %d (%s): NVML=%v effectiveBytes=%d", index, uuid, ret, memory.Total)
 	}
 	productName, ret := device.GetName()
 	if ret != nvml.SUCCESS {

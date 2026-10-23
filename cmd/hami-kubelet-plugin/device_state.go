@@ -79,7 +79,7 @@ func NewDeviceState(ctx context.Context, config *Config) (*DeviceState, error) {
 	devRoot := containerDriverRoot.getDevRoot()
 	klog.Infof("Using devRoot=%v", devRoot)
 
-	nvdevlib, err := newDeviceLib(containerDriverRoot)
+	nvdevlib, err := newDeviceLib(containerDriverRoot, config.deviceMemoryBytes)
 	if err != nil {
 		return nil, fmt.Errorf("failed to create device library: %w", err)
 	}
