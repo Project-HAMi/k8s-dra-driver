@@ -7,6 +7,7 @@ import (
 	"os/exec"
 	"path/filepath"
 	"reflect"
+	"strings"
 	"testing"
 
 	appsv1 "k8s.io/api/apps/v1"
@@ -16,13 +17,10 @@ import (
 )
 
 func TestPodLabelPatchRBAC(t *testing.T) {
-	if _, err := exec.LookPath("helm"); err != nil {
-		t.Skip("helm is required for chart rendering tests")
-	}
 	for _, enabled := range []string{"false", "true"} {
 		t.Run("monitor="+enabled, func(t *testing.T) {
-			output, err := exec.Command("helm", "template", "test", "../hami-dra-driver", "--namespace", "hami-system", "--kube-version", "1.34.0",
-				"--set", "monitor.enabled="+enabled, "--show-only", "templates/rbac-kubeletplugin.yaml.yaml").CombinedOutput()
+			output, err := templateChart(t, "--set", "monitor.enabled="+enabled,
+				"--show-only", "templates/rbac-kubeletplugin.yaml.yaml")
 			if err != nil {
 				t.Fatalf("helm template: %v\n%s", err, output)
 			}
@@ -65,37 +63,37 @@ func assertPodLabelPatchRBAC(t *testing.T, manifest []byte) {
 	}
 }
 
-func renderDaemonSet(t *testing.T, enabled, driverRoot, hookRoot string) appsv1.DaemonSet {
+func templateChart(t *testing.T, args ...string) ([]byte, error) {
 	t.Helper()
 	if _, err := exec.LookPath("helm"); err != nil {
 		t.Skip("helm is required for chart rendering tests")
 	}
-	output, err := exec.Command("helm", "template", "test", "../hami-dra-driver", "--namespace", "hami-system", "--kube-version", "1.34.0",
-		"--set", "monitor.enabled="+enabled, "--set", "nvidiaDriverRoot="+driverRoot,
-		"--set", "driver.hostHookPath="+hookRoot).CombinedOutput()
+	baseArgs := []string{"template", "test", "../hami-dra-driver", "--namespace", "hami-system", "--kube-version", "1.34.0"}
+	return exec.Command("helm", append(baseArgs, args...)...).CombinedOutput()
+}
+
+func renderDaemonSet(t *testing.T, args ...string) appsv1.DaemonSet {
+	t.Helper()
+	output, err := templateChart(t, append([]string{"--show-only", "templates/daemonset.yaml"}, args...)...)
 	if err != nil {
 		t.Fatalf("helm template: %v\n%s", err, output)
 	}
-	decoder := yaml.NewYAMLOrJSONDecoder(bytes.NewReader(output), 4096)
-	for {
-		var ds appsv1.DaemonSet
-		if err := decoder.Decode(&ds); err != nil {
-			if err == io.EOF {
-				t.Fatal("DaemonSet not rendered")
-			}
-			t.Fatal(err)
-		}
-		if ds.Kind == "DaemonSet" {
-			return ds
-		}
+	var ds appsv1.DaemonSet
+	if err := yaml.Unmarshal(output, &ds); err != nil {
+		t.Fatal(err)
 	}
+	if ds.Kind != "DaemonSet" {
+		t.Fatalf("rendered kind = %q, want DaemonSet", ds.Kind)
+	}
+	return ds
 }
 
 func TestMonitorRuntimeInjectionAndCacheMount(t *testing.T) {
 	for _, root := range []string{"/", "/run/nvidia/driver"} {
 		for _, hook := range []string{"/usr/local", "/var/lib/hami"} {
 			t.Run(root+hook, func(t *testing.T) {
-				ds := renderDaemonSet(t, "true", root, hook)
+				ds := renderDaemonSet(t, "--set", "monitor.enabled=true",
+					"--set", "nvidiaDriverRoot="+root, "--set", "driver.hostHookPath="+hook)
 				var monitor *corev1.Container
 				for i := range ds.Spec.Template.Spec.Containers {
 					if ds.Spec.Template.Spec.Containers[i].Name == "monitor" {
@@ -174,10 +172,56 @@ func TestMonitorRuntimeInjectionAndCacheMount(t *testing.T) {
 }
 
 func TestMonitorDisabled(t *testing.T) {
-	ds := renderDaemonSet(t, "false", "/", "/usr/local")
+	ds := renderDaemonSet(t, "--set", "monitor.enabled=false")
 	for _, container := range ds.Spec.Template.Spec.Containers {
 		if container.Name == "monitor" {
 			t.Fatal("disabled monitor was rendered")
 		}
+	}
+}
+
+func TestDeviceMemoryEnv(t *testing.T) {
+	for _, tc := range []struct {
+		name string
+		args []string
+		want string
+	}{
+		{name: "default", want: "0"},
+		{
+			name: "missing from merged values",
+			// A null override removes the key, as with reused defaults from an older chart.
+			args: []string{"--set", "driver.preConfiguredDeviceMemory=null"},
+			want: "0",
+		},
+		{
+			name: "uppercase feature gate",
+			args: []string{"--set-string", "featureGates.HAMiCoreSupport=TRUE,driver.preConfiguredDeviceMemory=64Gi"},
+			want: "64Gi",
+		},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			ds := renderDaemonSet(t, tc.args...)
+			var budgets []string
+			for _, container := range ds.Spec.Template.Spec.Containers {
+				for _, env := range container.Env {
+					if env.Name == "PRE_CONFIGURED_DEVICE_MEMORY" {
+						if container.Name != "gpus" {
+							t.Errorf("found PRE_CONFIGURED_DEVICE_MEMORY in %q, want gpus", container.Name)
+						}
+						budgets = append(budgets, env.Value)
+					}
+				}
+			}
+			if len(budgets) != 1 || budgets[0] != tc.want {
+				t.Errorf("PRE_CONFIGURED_DEVICE_MEMORY values = %q, want [%q]", budgets, tc.want)
+			}
+		})
+	}
+}
+
+func TestDeviceMemoryRejectsNonStringDefault(t *testing.T) {
+	output, err := templateChart(t, "--set", "featureGates.HAMiCoreSupport=false,driver.preConfiguredDeviceMemory=0")
+	if err == nil || !strings.Contains(string(output), "driver.preConfiguredDeviceMemory must be a Kubernetes Quantity string") {
+		t.Fatalf("expected Helm to reject the numeric memory budget, got %v\n%s", err, output)
 	}
 }

@@ -67,6 +67,12 @@ driver:
   cdiRoot: /var/run/cdi
   hostHookPath: /usr/local
   hostTmp: /tmp
+  # Global HAMi-Core fallback when NVML memory reporting is unsupported.
+  # A Node's hami.io/default-device-memory annotation takes precedence.
+  # Kubernetes Quantity string; prefer Mi/Gi. Unitless values are bytes,
+  # and m means milli, not MiB. Positive values round UP to a whole 1 MiB.
+  # With the default "0", an unsupported memory query stops device discovery.
+  preConfiguredDeviceMemory: "0"
 
 # Feature gates forwarded to the hami-kubelet-plugin binary as the
 # FEATURE_GATES environment variable.

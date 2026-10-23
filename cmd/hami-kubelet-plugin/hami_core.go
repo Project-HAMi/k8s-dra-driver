@@ -50,6 +50,8 @@ import (
 	cdispec "tags.cncf.io/container-device-interface/specs-go"
 )
 
+const bytesPerMiB = 1 << 20
+
 // For deviceinfo.goh
 // TODO: Implements a String method for HAMIGpuInfo
 type HAMiGpuInfo struct {
@@ -114,9 +116,9 @@ func (d *HAMiGpuInfo) GetDevice() resourceapi.Device {
 				RequestPolicy: &resourceapi.CapacityRequestPolicy{
 					Default: resource.NewQuantity(int64(d.memoryBytes), resource.BinarySI),
 					ValidRange: &resourceapi.CapacityRequestPolicyRange{
-						Min:  resource.NewQuantity(int64(1048576), resource.BinarySI),
+						Min:  resource.NewQuantity(bytesPerMiB, resource.BinarySI),
 						Max:  resource.NewQuantity(int64(d.memoryBytes), resource.BinarySI),
-						Step: resource.NewQuantity(int64(1048576), resource.BinarySI),
+						Step: resource.NewQuantity(bytesPerMiB, resource.BinarySI),
 					},
 				},
 			},
@@ -470,7 +472,7 @@ func (m *HAMiCoreManager) GetCDIContainerEdits(ctx context.Context, claim *resou
 		capNameSMLimit := resourceapi.QualifiedName("cores")
 		capNameMemoryLimit := resourceapi.QualifiedName("memory")
 		SMLimitEnv := fmt.Sprintf("CUDA_DEVICE_SM_LIMIT_%d=%s", idx, "60")
-		memoryLimit := string(strconv.FormatUint(dev.HAMiGpu.memoryBytes/1024/1024, 10)) + "m"
+		memoryLimit := strconv.FormatUint(dev.HAMiGpu.memoryBytes/bytesPerMiB, 10) + "m"
 		MemoryLimitEnv := fmt.Sprintf("CUDA_DEVICE_MEMORY_LIMIT_%d=%s", idx, memoryLimit)
 		// TODO: Loop in a map getting from HAMiCoreManager
 		if _, ok := devCapMap[name]; ok {
@@ -485,7 +487,7 @@ func (m *HAMiCoreManager) GetCDIContainerEdits(ctx context.Context, claim *resou
 				q := devCapMap[name][capNameMemoryLimit]
 				val, succ := q.AsInt64()
 				if succ {
-					MemoryLimitEnv = fmt.Sprintf("CUDA_DEVICE_MEMORY_LIMIT_%d=%s", idx, strconv.FormatInt(val/1024/1024, 10)+"m")
+					MemoryLimitEnv = fmt.Sprintf("CUDA_DEVICE_MEMORY_LIMIT_%d=%s", idx, strconv.FormatInt(val/bytesPerMiB, 10)+"m")
 				}
 			}
 		}
