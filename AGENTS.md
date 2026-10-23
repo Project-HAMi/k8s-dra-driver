@@ -58,7 +58,7 @@ This section defines the architectural agents within the project for SDD.
     *   Re-advertising `ResourceSlice` after prepare/unprepare when `featuregates.PassthroughSupport` is enabled.
 *   **Constraints:**
     *   Must ensure thread-safe prepare/unprepare using the node-global file-based `pulock` (`pu.lock`, 10 s timeout).
-    *   `Shutdown` must drain the `deviceHealthMonitor`, stop the `healthcheck`, and wait for all goroutines before stopping the `pluginhelper`.
+    *   `Shutdown` must drain the `deviceHealthMonitor`, stop the `healthcheck`, and wait for all goroutines, including HAMi-Core Pod informer termination, before stopping the `pluginhelper`.
 
 ### 2. Device State Agent
 **Source:** `cmd/hami-kubelet-plugin/device_state.go`
@@ -104,6 +104,7 @@ This section defines the architectural agents within the project for SDD.
     *   Implements `Unprepare` — removes all cache directories identified by the claim's ownership marker, or its `.cache` file for older preparations. Cleanup does not require CUDA initialization or a live Pod; directories with neither ownership evidence are left untouched. Ownership inspection/deletion errors propagate to retain retryable cleanup state.
         *   Retains the Pod's node label until Pod deletion, because another claim/container in the Pod may still need monitoring. HAMi-Core preparation requires `get` and `patch` access to Pods even if the optional monitor sidecar is disabled; custom RBAC must grant these permissions.
     *   Defines `HAMiGpuDeviceType` (`hami-gpu`) constant and `PreparedHAMiGpu` type for tracking prepared HAMi-Core allocations.
+    *   `Stop` closes the Pod informer stop channel once, then calls the informer factory's `Shutdown` to await worker/event-handler termination. Repeated or concurrent calls wait for the same shutdown; managers without an informer are safe to stop.
 *   **Constraints:**
     *   `featuregates.HAMiCoreSupport` is mutually exclusive with `TimeSlicingSettings`, `MPSSupport`, `PassthroughSupport`, `DynamicMIG`, and `ComputeDomainCliques`.
     *   `SDD Interface:` Must support mapping arbitrary capacity requests to specific vendor-neutral CDI specifications.

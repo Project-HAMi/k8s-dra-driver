@@ -23,6 +23,7 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
+	"sync"
 	"testing"
 	"time"
 
@@ -42,6 +43,92 @@ import (
 	"k8s.io/client-go/tools/cache"
 	"k8s.io/utils/ptr"
 )
+
+func TestHAMiCoreManagerStopWaitsForInformer(t *testing.T) {
+	pod := &corev1.Pod{
+		ObjectMeta: metav1.ObjectMeta{Namespace: "default", Name: "pod", UID: "pod-uid"},
+		Spec:       corev1.PodSpec{NodeName: "node-a"},
+	}
+	manager := NewHAMiCoreManager(nil, t.TempDir(), fake.NewClientset(pod), "node-a")
+	informer := manager.podInformerFactory.Core().V1().Pods().Informer()
+	entered, release := make(chan struct{}), make(chan struct{})
+	var releaseOnce sync.Once
+	stopInvoked := false
+	t.Cleanup(func() {
+		releaseOnce.Do(func() { close(release) })
+		if !stopInvoked {
+			manager.Stop()
+		}
+		manager.podInformerFactory.Shutdown()
+	})
+	_, err := informer.AddEventHandler(cache.ResourceEventHandlerFuncs{
+		AddFunc: func(interface{}) {
+			close(entered)
+			<-release // an in-flight event handler must drain before Stop returns
+		},
+	})
+	require.NoError(t, err)
+	select {
+	case <-entered:
+	case <-time.After(5 * time.Second):
+		t.Fatal("Pod informer did not start processing the event")
+	}
+	returned := make(chan struct{})
+	stopInvoked = true
+	go func() {
+		manager.Stop()
+		close(returned)
+	}()
+	select {
+	case <-manager.stopCh:
+	case <-time.After(5 * time.Second):
+		t.Fatal("Stop did not signal the informer")
+	}
+	select {
+	case <-returned:
+		t.Error("Stop returned while the Pod informer event handler was still running")
+	case <-time.After(100 * time.Millisecond):
+	}
+	releaseOnce.Do(func() { close(release) })
+	select {
+	case <-returned:
+	case <-time.After(5 * time.Second):
+		t.Fatal("Stop did not finish after the event handler exited")
+	}
+	require.True(t, informer.IsStopped(), "Stop must await informer termination")
+}
+
+func TestHAMiCoreManagerStopRepeatedAndConcurrent(t *testing.T) {
+	for _, name := range []string{"with informer", "without informer", "zero value"} {
+		t.Run(name, func(t *testing.T) {
+			var manager *HAMiCoreManager
+			switch name {
+			case "with informer":
+				manager = NewHAMiCoreManager(nil, t.TempDir(), fake.NewClientset(), "node-a")
+			case "without informer":
+				manager = NewHAMiCoreManager(nil, t.TempDir(), nil, "node-a")
+			default:
+				manager = &HAMiCoreManager{}
+			}
+			var wg sync.WaitGroup
+			for range 4 {
+				wg.Add(1)
+				go func() {
+					defer wg.Done()
+					manager.Stop()
+				}()
+			}
+			done := make(chan struct{})
+			go func() { wg.Wait(); close(done) }()
+			select {
+			case <-done:
+			case <-time.After(5 * time.Second):
+				t.Fatal("concurrent Stop calls did not finish")
+			}
+			require.NotPanics(t, manager.Stop)
+		})
+	}
+}
 
 func TestGetCDIContainerEditsLabelsPodForMonitor(t *testing.T) {
 	pod := &corev1.Pod{

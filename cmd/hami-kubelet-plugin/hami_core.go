@@ -25,6 +25,7 @@ import (
 	"path/filepath"
 	"slices"
 	"strconv"
+	"sync"
 	"time"
 
 	"github.com/Masterminds/semver"
@@ -214,6 +215,7 @@ type HAMiCoreManager struct {
 	podLister          corelisters.PodLister
 	podListerSynced    cache.InformerSynced
 	stopCh             chan struct{}
+	stopOnce           sync.Once
 }
 
 func NewHAMiCoreManager(deviceLib *deviceLib, hostHookPath string, clientset kubernetes.Interface, nodeName string) *HAMiCoreManager {
@@ -249,8 +251,17 @@ func (m *HAMiCoreManager) WaitForPodCacheSync(ctx context.Context) bool {
 	return cache.WaitForCacheSync(ctx.Done(), m.podListerSynced)
 }
 
+// Stop signals the informer to stop and waits for its workers and handlers.
+// All callers, including concurrent/repeated calls, wait for the same shutdown.
 func (m *HAMiCoreManager) Stop() {
-	close(m.stopCh)
+	m.stopOnce.Do(func() {
+		if m.stopCh != nil {
+			close(m.stopCh)
+		}
+		if m.podInformerFactory != nil {
+			m.podInformerFactory.Shutdown()
+		}
+	})
 }
 
 func (m *HAMiCoreManager) getConsumableCapacityMap(claim *resourceapi.ResourceClaim) map[string]map[resourceapi.QualifiedName]resource.Quantity {
