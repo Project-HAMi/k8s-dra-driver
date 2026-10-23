@@ -3,6 +3,7 @@ package chart_test
 import (
 	"bytes"
 	"io"
+	"os"
 	"os/exec"
 	"path/filepath"
 	"reflect"
@@ -18,17 +19,34 @@ func TestPodLabelPatchRBAC(t *testing.T) {
 	if _, err := exec.LookPath("helm"); err != nil {
 		t.Skip("helm is required for chart rendering tests")
 	}
-	output, err := exec.Command("helm", "template", "test", "../hami-dra-driver", "--namespace", "hami-system", "--kube-version", "1.34.0",
-		"--show-only", "templates/rbac-kubeletplugin.yaml.yaml").CombinedOutput()
-	if err != nil {
-		t.Fatalf("helm template: %v\n%s", err, output)
+	for _, enabled := range []string{"false", "true"} {
+		t.Run("monitor="+enabled, func(t *testing.T) {
+			output, err := exec.Command("helm", "template", "test", "../hami-dra-driver", "--namespace", "hami-system", "--kube-version", "1.34.0",
+				"--set", "monitor.enabled="+enabled, "--show-only", "templates/rbac-kubeletplugin.yaml.yaml").CombinedOutput()
+			if err != nil {
+				t.Fatalf("helm template: %v\n%s", err, output)
+			}
+			assertPodLabelPatchRBAC(t, output)
+		})
 	}
-	decoder := yaml.NewYAMLOrJSONDecoder(bytes.NewReader(output), 4096)
+}
+
+func TestDemoPodLabelPatchRBAC(t *testing.T) {
+	manifest, err := os.ReadFile(filepath.Join("..", "..", "demo", "yaml", "rbac.yaml"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	assertPodLabelPatchRBAC(t, manifest)
+}
+
+func assertPodLabelPatchRBAC(t *testing.T, manifest []byte) {
+	t.Helper()
+	decoder := yaml.NewYAMLOrJSONDecoder(bytes.NewReader(manifest), 4096)
 	for {
 		var role rbacv1.ClusterRole
 		if err := decoder.Decode(&role); err != nil {
 			if err == io.EOF {
-				t.Fatal("Pod-patch RBAC not rendered")
+				t.Fatal("ClusterRole missing required Pod get/list/watch/patch permissions")
 			}
 			t.Fatal(err)
 		}

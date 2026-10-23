@@ -57,6 +57,11 @@ kubectl apply -f rbac.yaml
 kubectl apply -f ds.yaml
 ```
 
+The demo ClusterRole grants Pod `get/list/watch` for discovery and `patch` for
+the driver-added `hami.io/vgpu-node` label. HAMi-Core preparation requires these
+permissions even when vGPUMonitor is disabled. Reapply `rbac.yaml` before
+upgrading an existing demo installation.
+
 ## Experience HAMi-Core DRA
 
 Images should be loaded into cluster before creating the pod first.
