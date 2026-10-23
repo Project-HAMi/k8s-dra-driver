@@ -194,6 +194,10 @@ const hostHookPathEnvVar = "HAMI_HOST_HOOK_PATH"
 // Upstream vGPUmonitor uses this legacy label to select Pods for container metrics.
 const hamiMonitorNodeLabel = "hami.io/vgpu-node"
 
+// Persist claim ownership before CUDA creates its cache. The monitor only
+// scans *.cache files, so this marker must not use that suffix.
+const hamiCoreClaimMarkerPrefix = ".claim-"
+
 // For sharing.go
 type HAMiCoreManager struct {
 	// hostHookPath addresses the same tree as hookPath, but as seen from the
@@ -403,13 +407,17 @@ func (m *HAMiCoreManager) GetCDIContainerEdits(ctx context.Context, claim *resou
 
 	// Clean up and recreate the directory for this pod+container.
 	if err := os.RemoveAll(cacheFileDirectory); err != nil {
-		klog.Warningf("Failed to remove host directory for cachefile %s: %v", cacheFileHostDirectory, err)
+		return nil, fmt.Errorf("remove cache directory %s: %w", cacheFileDirectory, err)
 	}
 	if err := os.MkdirAll(cacheFileDirectory, 0777); err != nil {
-		klog.Warningf("Failed to create host directory for cachefile %s: %v", cacheFileHostDirectory, err)
+		return nil, fmt.Errorf("create cache directory %s: %w", cacheFileDirectory, err)
 	}
 	if err := os.Chmod(cacheFileDirectory, 0777); err != nil {
-		klog.Warningf("Failed to chmod host directory for cachefile %s: %v", cacheFileHostDirectory, err)
+		return nil, fmt.Errorf("chmod cache directory %s: %w", cacheFileDirectory, err)
+	}
+	marker := filepath.Join(cacheFileDirectory, hamiCoreClaimMarkerPrefix+string(claim.UID))
+	if err := os.WriteFile(marker, nil, 0600); err != nil {
+		return nil, fmt.Errorf("record claim ownership in %s: %w", marker, err)
 	}
 
 	hamiEnvs := []string{}
@@ -490,17 +498,33 @@ func (m *HAMiCoreManager) Unprepare(claimUID string, pl PreparedDeviceList) erro
 		if !entry.IsDir() {
 			continue
 		}
-		claimCache := filepath.Join(containersPath, entry.Name(), claimUID+".cache")
-		if _, err := os.Stat(claimCache); err == nil {
-			dirToRemove := filepath.Join(containersPath, entry.Name())
-			if err := os.RemoveAll(dirToRemove); err != nil {
-				return fmt.Errorf("failed to remove container cache directory %s: %w", dirToRemove, err)
+		directory := filepath.Join(containersPath, entry.Name())
+		owned := false
+		// Keep accepting cache-file ownership for preparations made before the
+		// marker was introduced. Never infer ownership from an empty directory.
+		for _, name := range []string{hamiCoreClaimMarkerPrefix + claimUID, claimUID + ".cache"} {
+			path := filepath.Join(directory, name)
+			info, err := os.Lstat(path)
+			if os.IsNotExist(err) {
+				continue
 			}
-			klog.V(4).Infof("Unprepare: removed HAMi-Core cache directory %s for claim %s", dirToRemove, claimUID)
-			return nil
+			if err != nil {
+				return fmt.Errorf("inspect claim ownership %s: %w", path, err)
+			}
+			if !info.Mode().IsRegular() {
+				return fmt.Errorf("claim ownership path %s is not a regular file", path)
+			}
+			owned = true
+			break
 		}
+		if !owned {
+			continue
+		}
+		if err := os.RemoveAll(directory); err != nil {
+			return fmt.Errorf("failed to remove container cache directory %s: %w", directory, err)
+		}
+		klog.V(4).Infof("Unprepare: removed HAMi-Core cache directory %s for claim %s", directory, claimUID)
 	}
-	klog.V(4).Infof("Unprepare: no HAMi-Core cache directory found for claim %s", claimUID)
 	return nil
 }
 

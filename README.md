@@ -72,6 +72,16 @@ support. The monitor still requires NVIDIA runtime library injection.
 Workloads previously prepared with an `unknown` cache are not migrated
 automatically; recreate affected workloads through normal cleanup/preparation.
 
+Preparation writes a `.claim-<claimUID>` ownership marker before CUDA starts;
+HAMi-Core remains responsible for creating the actual `.cache` file. Unprepare
+uses the marker to remove owned directories even if the workload never initializes
+CUDA, the Pod has been deleted, or the driver has restarted. Explicit cleanup
+also handles partially prepared claims. Older directories with the claim's
+`.cache` file remain supported. Empty directories without either ownership marker
+or claim cache are not deleted blindly; pre-existing unmarked orphans cannot be
+attributed safely. Cache setup and ownership inspection failures are returned
+as errors rather than reported as successful preparation/cleanup.
+
 ## Building the image with vGPUMonitor
 
 `make build` and `make cmds` build this repository's Go code only. `make image`

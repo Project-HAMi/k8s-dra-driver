@@ -730,7 +730,103 @@ func TestGetCDIContainerEditsCachePath(t *testing.T) {
 	}
 }
 
+func TestGetCDIContainerEditsCacheSetupFailure(t *testing.T) {
+	pod := &corev1.Pod{
+		ObjectMeta: metav1.ObjectMeta{Namespace: "default", Name: "pod", UID: "pod-uid"},
+		Spec: corev1.PodSpec{NodeName: "node-a",
+			ResourceClaims: []corev1.PodResourceClaim{{Name: "gpu", ResourceClaimName: ptr.To("gpu-claim")}},
+			Containers: []corev1.Container{{Name: "workload", Resources: corev1.ResourceRequirements{
+				Claims: []corev1.ResourceClaim{{Name: "gpu"}},
+			}}},
+		},
+	}
+	root := t.TempDir()
+	blocked := filepath.Join(root, "vgpu")
+	require.NoError(t, os.WriteFile(blocked, []byte("preserve"), 0600))
+	manager := managerWithPods(t, pod)
+	manager.clientset = fake.NewClientset(pod.DeepCopy())
+	manager.containerHookPath, manager.hostHookPath = root, root
+	claim := newResourceClaim("gpu-claim", []resourceapi.ResourceClaimConsumerReference{{Resource: "pods", Name: pod.Name, UID: pod.UID}})
+	edits, err := manager.GetCDIContainerEdits(context.Background(), claim, nil)
+	require.Error(t, err)
+	require.Nil(t, edits)
+	data, err := os.ReadFile(blocked)
+	require.NoError(t, err)
+	require.Equal(t, "preserve", string(data))
+}
+
+func TestUnprepareBeforeCUDAInitialization(t *testing.T) {
+	pod := &corev1.Pod{
+		ObjectMeta: metav1.ObjectMeta{Namespace: "default", Name: "pod", UID: "pod-uid"},
+		Spec: corev1.PodSpec{NodeName: "node-a",
+			ResourceClaims: []corev1.PodResourceClaim{{Name: "gpu", ResourceClaimName: ptr.To("gpu-claim")}},
+			Containers: []corev1.Container{{Name: "workload", Resources: corev1.ResourceRequirements{
+				Claims: []corev1.ResourceClaim{{Name: "gpu"}},
+			}}},
+		},
+	}
+	root := t.TempDir()
+	manager := managerWithPods(t, pod)
+	manager.clientset = fake.NewClientset(pod.DeepCopy())
+	manager.containerHookPath, manager.hostHookPath = root, root
+	claim := newResourceClaim("gpu-claim", []resourceapi.ResourceClaimConsumerReference{{Resource: "pods", Name: pod.Name, UID: pod.UID}})
+	_, err := manager.GetCDIContainerEdits(context.Background(), claim, nil)
+	require.NoError(t, err)
+	directory := filepath.Join(root, "vgpu", "containers", "pod-uid_workload")
+	require.DirExists(t, directory)
+	require.NoFileExists(t, filepath.Join(directory, "claim-uid.cache"))
+	require.FileExists(t, filepath.Join(directory, hamiCoreClaimMarkerPrefix+string(claim.UID)))
+	// Model a driver restart and deletion of the Pod before Unprepare: cleanup
+	// must work from persisted ownership, not an in-memory map or the Pod API.
+	restarted := &HAMiCoreManager{containerHookPath: root, hostHookPath: root}
+	require.NoError(t, restarted.Unprepare(string(claim.UID), nil))
+	require.NoDirExists(t, directory)
+	require.NoError(t, restarted.Unprepare(string(claim.UID), nil))
+}
+
+func TestUnpreparePartialHAMiBeforeCUDAInitialization(t *testing.T) {
+	root := t.TempDir()
+	directory := filepath.Join(root, "vgpu", "containers", "pod_workload")
+	require.NoError(t, os.MkdirAll(directory, 0755))
+	require.NoError(t, os.WriteFile(filepath.Join(directory, hamiCoreClaimMarkerPrefix+"claim-uid"), nil, 0600))
+	state := &DeviceState{hamiCoreManager: &HAMiCoreManager{containerHookPath: root}}
+	partial := PreparedClaim{
+		CheckpointState: ClaimCheckpointStatePrepareStarted,
+		Status:          resourceapi.ResourceClaimStatus{Allocation: &resourceapi.AllocationResult{}},
+	}
+	require.NoError(t, state.unpreparePartiallyPrepairedClaim("claim-uid", partial, (&Checkpoint{}).ToLatestVersion()))
+	require.NoDirExists(t, directory)
+}
+
 func TestUnprepareCacheDirectory(t *testing.T) {
+	t.Run("markers remove all owned directories without CUDA and preserve others", func(t *testing.T) {
+		root := t.TempDir()
+		containers := filepath.Join(root, "vgpu", "containers")
+		for _, name := range []string{"pod-a_workload", "pod-b_workload", "other-pod_workload", "unmarked_workload"} {
+			require.NoError(t, os.MkdirAll(filepath.Join(containers, name), 0755))
+		}
+		for _, name := range []string{"pod-a_workload", "pod-b_workload"} {
+			require.NoError(t, os.WriteFile(filepath.Join(containers, name, hamiCoreClaimMarkerPrefix+"claim-uid"), nil, 0600))
+		}
+		otherMarker := filepath.Join(containers, "other-pod_workload", hamiCoreClaimMarkerPrefix+"other-claim")
+		require.NoError(t, os.WriteFile(otherMarker, nil, 0600))
+		manager := &HAMiCoreManager{containerHookPath: root}
+		require.NoError(t, manager.Unprepare("claim-uid", nil))
+		require.NoDirExists(t, filepath.Join(containers, "pod-a_workload"))
+		require.NoDirExists(t, filepath.Join(containers, "pod-b_workload"))
+		require.FileExists(t, otherMarker)
+		require.DirExists(t, filepath.Join(containers, "unmarked_workload"))
+	})
+
+	t.Run("invalid ownership file fails without deleting directory", func(t *testing.T) {
+		root := t.TempDir()
+		directory := filepath.Join(root, "vgpu", "containers", "pod_workload")
+		require.NoError(t, os.MkdirAll(filepath.Join(directory, hamiCoreClaimMarkerPrefix+"claim-uid"), 0755))
+		manager := &HAMiCoreManager{containerHookPath: root}
+		require.ErrorContains(t, manager.Unprepare("claim-uid", nil), "not a regular file")
+		require.DirExists(t, directory)
+	})
+
 	t.Run("missing containers directory is idempotent", func(t *testing.T) {
 		manager := &HAMiCoreManager{containerHookPath: t.TempDir()}
 		if err := manager.Unprepare("claim-uid", nil); err != nil {

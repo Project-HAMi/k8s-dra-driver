@@ -239,8 +239,7 @@ func (s *DeviceState) Prepare(ctx context.Context, claim *resourceapi.ResourceCl
 	// Check for existing 'completed' claim preparation before updating the
 	// checkpoint with 'PrepareStarted'. Otherwise, we effectively mark a
 	// perfectly prepared claim as only partially prepared, which may have
-	// negative side effects during Unprepare() (currently a noop in this case:
-	// unprepare noop: claim preparation started but not completed).
+	// negative side effects during Unprepare().
 	preparedClaim, exists := cp.V2.PreparedClaims[claimUID]
 	if exists && preparedClaim.CheckpointState == ClaimCheckpointStatePrepareCompleted {
 		// Make this a noop. Associated device(s) has/ave been prepared by us.
@@ -486,8 +485,9 @@ func (s *DeviceState) Unprepare(ctx context.Context, claimRef kubeletplugin.Name
 	return nil
 }
 
-// Revert previous and potentially partial MIG device creation (not acknowledged
-// by transitioning the claim state to PrepareCompleted). Can we safely revert
+// Revert HAMi-Core cache setup or potentially partial MIG device creation (not
+// acknowledged by transitioning the claim state to PrepareCompleted). For MIG,
+// can we safely revert
 // that based on the information in checkpoint? As we didn't pull through with
 // the regular creation/prepare flow, we conceptually cannot use a specific MIG
 // device UUID as input to this cleanup operation. The precise physical MIG
@@ -526,6 +526,13 @@ func (s *DeviceState) Unprepare(ctx context.Context, claimRef kubeletplugin.Name
 // preparing. In both cases, the `checkpoint` data is fresh enough; there is no
 // other entity that currently legitimately owns the device represented in `pc`.
 func (s *DeviceState) unpreparePartiallyPrepairedClaim(cuid string, pc PreparedClaim, checkpoint *Checkpoint) error {
+	if s.hamiCoreManager != nil {
+		// The manager is created only when HAMiCoreSupport is enabled.
+		// Prepare may have created the cache directory before a later step
+		// failed. Ownership markers allow cleanup even without CUDA or a
+		// completed device checkpoint. Re-prepare still skips this rollback.
+		return s.hamiCoreManager.Unprepare(cuid, nil)
+	}
 	// For now, there's nothing to do when DynamicMIG is not enabled.
 	if !featuregates.Enabled(featuregates.DynamicMIG) {
 		klog.Infof("unprepare noop: preparation started but not completed for claim %s (devices: %v)", PreparedClaimToString(&pc, cuid), pc.Status.Allocation.Devices.Results)

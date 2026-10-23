@@ -74,7 +74,7 @@ This section defines the architectural agents within the project for SDD.
         *   The checkpoint records the node boot ID (`NodeBootID`, read via `pkg/bootid`). At startup, `initCheckpoint` discards a checkpoint written during a previous boot, so claims are fully re-prepared after a node reboot. A legacy checkpoint without a boot ID is kept and stamped with the current one.
     *   Performs **overlap validation** (`validateNoOverlappingPreparedDevices`) to prevent double-allocation of the same device across different claims (admin-access allocations are exempt) — **skipped when `HAMiCoreSupport` is enabled** because HAMi-Core devices are shared across claims.
     *   **Idempotent prepare:** a claim in `PrepareCompleted` state returns its checkpointed devices without re-preparing (also when `HAMiCoreSupport` is enabled).
-    *   **HAMiCore-specific prepare behavior:** When `HAMiCoreSupport` is enabled, partial prepare rollback is skipped.
+    *   **HAMiCore-specific prepare behavior:** When `HAMiCoreSupport` is enabled, rollback before re-prepare is skipped. Explicit Unprepare of a partially prepared HAMi-Core claim cleans up claim-owned cache directories.
     *   Manages sub-managers, each activated by a feature gate:
         *   `HAMiCoreManager` — HAMi-Core GPU virtualization (`featuregates.HAMiCoreSupport`).
         *   `TimeSlicingManager` — CUDA time-slicing (`featuregates.TimeSlicingSettings`).
@@ -95,12 +95,13 @@ This section defines the architectural agents within the project for SDD.
         *   Resolves the reserving Pod through the informer cache, falling back to a context-aware live Pod GET on NotFound. Validates the Pod UID and assigned node before mapping direct/template claims to regular/init containers. Resolution failures propagate to preparation so kubelet can retry; no `<claimUID>_unknown` cache fallback is created.
         *   Adds `hami.io/vgpu-node=<nodeName>` for compatibility with upstream vGPUmonitor's legacy metric selector. Uses a live UID/node check and a resourceVersion/UID-guarded metadata patch; preserves unrelated labels and refuses conflicting node labels. The method accepts the prepare context and returns errors; resolution and label failures propagate to preparation before cache/CDI changes.
         *   Creates `/usr/local/vgpu/containers/<podUID>_<containerName>/<claimUID>.cache` (in-container path), with host CDI sources under `<hostHookPath>/vgpu/containers/`.
+        *   Writes a `.claim-<claimUID>` ownership marker during preparation; the `.cache` file itself is created only by HAMi-Core on CUDA initialization. The marker is not a monitor cache and survives driver restart. Cache-directory setup or marker-write errors fail preparation.
         *   Mounts `<hostHookPath>/vgpu/libvgpu.so` on the host to `/usr/local/vgpu/libvgpu.so` in the container, and `<hostHookPath>/vgpu/ld.so.preload` to `/etc/ld.so.preload` (both read-only).
         *   `hostHookPath` defaults to `/usr/local` and can be overridden via `HAMI_HOST_HOOK_PATH` (Helm: `driver.hostHookPath`); the in-container path is fixed because the baked-in `ld.so.preload` refers to it.
         *   Mounts the claim cache directory and `/tmp/vgpulock` as read-write bind mounts.
         *   Injects per-device environment variables: `CUDA_DEVICE_SM_LIMIT_<idx>`, `CUDA_DEVICE_MEMORY_LIMIT_<idx>`, and `CUDA_DEVICE_MEMORY_SHARED_CACHE`.
         *   Reads actual consumed capacity (`cores`, `memory`) from `result.ConsumedCapacity` in the claim status.
-    *   Implements `Unprepare` — removes the claim cache directory on unprepare.
+    *   Implements `Unprepare` — removes all cache directories identified by the claim's ownership marker, or its `.cache` file for older preparations. Cleanup does not require CUDA initialization or a live Pod; directories with neither ownership evidence are left untouched. Ownership inspection/deletion errors propagate to retain retryable cleanup state.
         *   Retains the Pod's node label until Pod deletion, because another claim/container in the Pod may still need monitoring. HAMi-Core preparation requires `get` and `patch` access to Pods even if the optional monitor sidecar is disabled; custom RBAC must grant these permissions.
     *   Defines `HAMiGpuDeviceType` (`hami-gpu`) constant and `PreparedHAMiGpu` type for tracking prepared HAMi-Core allocations.
 *   **Constraints:**
