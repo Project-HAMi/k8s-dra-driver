@@ -22,7 +22,7 @@ package main
 // cache is pre-seeded, so these run in CI without a GPU.
 //
 // Assertions deliberately avoid the per-claim cache directory layout and the
-// CUDA_DEVICE_MEMORY_SHARED_CACHE value, which are implementation details of
+// exact CUDA_DEVICE_MEMORY_SHARED_CACHE value, which are implementation details of
 // HAMiCoreManager rather than part of the container-facing contract.
 
 import (
@@ -200,8 +200,9 @@ func TestHAMiPrepareWritesCDISpec(t *testing.T) {
 	require.Contains(t, edits.Env, "CUDA_DEVICE_SM_LIMIT_0=30")
 	require.Contains(t, edits.Env, "CUDA_DEVICE_MEMORY_LIMIT_0=4096m")
 	require.True(t, slices.ContainsFunc(edits.Env, func(e string) bool {
-		return strings.HasPrefix(e, "CUDA_DEVICE_MEMORY_SHARED_CACHE=")
-	}))
+		value, found := strings.CutPrefix(e, "CUDA_DEVICE_MEMORY_SHARED_CACHE=")
+		return found && value != ""
+	}), "CUDA_DEVICE_MEMORY_SHARED_CACHE must be present and nonempty")
 
 	mounts := map[string]cdispec.Mount{}
 	for _, m := range edits.Mounts {
