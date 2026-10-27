@@ -27,7 +27,6 @@ package main
 
 import (
 	"context"
-	"os"
 	"path/filepath"
 	"slices"
 	"strings"
@@ -36,11 +35,13 @@ import (
 
 	"github.com/stretchr/testify/require"
 
+	corev1 "k8s.io/api/core/v1"
 	resourceapi "k8s.io/api/resource/v1"
 	"k8s.io/apimachinery/pkg/api/resource"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/types"
 	utilcache "k8s.io/apimachinery/pkg/util/cache"
+	"k8s.io/client-go/kubernetes/fake"
 	featuregatetesting "k8s.io/component-base/featuregate/testing"
 	"k8s.io/dynamic-resource-allocation/deviceattribute"
 	"k8s.io/dynamic-resource-allocation/kubeletplugin"
@@ -78,8 +79,9 @@ func testHAMiGpu() *AllocatableDevice {
 }
 
 // newTestPrepareDeviceState returns a DeviceState with a single HAMi-Core GPU
-// that can run the full Prepare/Unprepare flow against temp directories.
-func newTestPrepareDeviceState(t *testing.T) *DeviceState {
+// and reserving Pods that can run the full Prepare/Unprepare flow against temp
+// directories. Seed both the Pod lister and API client for resolution and labeling.
+func newTestPrepareDeviceState(t *testing.T, claims ...*resourceapi.ResourceClaim) *DeviceState {
 	t.Helper()
 	// Prepare reads feature gates here and in the upstream driver, both of
 	// which parse a version that is only injected via -ldflags.
@@ -102,9 +104,33 @@ func newTestPrepareDeviceState(t *testing.T) *DeviceState {
 		},
 	}}, time.Hour)
 
+	client := fake.NewClientset()
+	pods := make([]*corev1.Pod, 0, len(claims))
+	for _, claim := range claims {
+		consumer := claim.Status.ReservedFor[0]
+		pod := &corev1.Pod{
+			ObjectMeta: metav1.ObjectMeta{Namespace: claim.Namespace, Name: consumer.Name, UID: consumer.UID},
+			Spec: corev1.PodSpec{
+				NodeName:       testNodeName,
+				ResourceClaims: []corev1.PodResourceClaim{{Name: "gpu", ResourceClaimName: ptr.To(claim.Name)}},
+				Containers: []corev1.Container{{Name: "workload", Resources: corev1.ResourceRequirements{
+					Claims: []corev1.ResourceClaim{{Name: "gpu"}},
+				}}},
+			},
+		}
+		_, err := client.CoreV1().Pods(pod.Namespace).Create(context.Background(), pod, metav1.CreateOptions{})
+		require.NoError(t, err)
+		pods = append(pods, pod)
+	}
+	manager := managerWithPods(t, pods...)
+	manager.nodeName = testNodeName
+	manager.clientset = client
+	manager.hostHookPath = testHostHookPath
+	manager.containerHookPath = t.TempDir()
+
 	s := newTestDeviceState(t)
 	s.cdi = cdi
-	s.hamiCoreManager = &HAMiCoreManager{hostHookPath: testHostHookPath}
+	s.hamiCoreManager = manager
 	s.allocatable = AllocatableDevices{gpu.CanonicalName(): gpu}
 	require.NoError(t, s.createCheckpoint(context.Background(), &Checkpoint{V2: &CheckpointV2{NodeBootID: testBootID}}))
 	return s
@@ -113,13 +139,15 @@ func newTestPrepareDeviceState(t *testing.T) *DeviceState {
 // testHAMiClaim returns a claim allocated on hami-gpu-0 with the given capacity.
 func testHAMiClaim(t *testing.T, uid string, cores int64, memory string) *resourceapi.ResourceClaim {
 	t.Helper()
-	// HAMiCoreManager writes the claim cache below the fixed in-container
-	// hookPath. Remove what a privileged test run may have left there.
-	t.Cleanup(func() { _ = os.RemoveAll(filepath.Join(hookPath, "vgpu", "claims", uid)) })
 
 	return &resourceapi.ResourceClaim{
 		ObjectMeta: metav1.ObjectMeta{Namespace: "default", Name: "claim-" + uid, UID: types.UID(uid)},
 		Status: resourceapi.ResourceClaimStatus{
+			ReservedFor: []resourceapi.ResourceClaimConsumerReference{{
+				Resource: "pods",
+				Name:     "pod-" + uid,
+				UID:      types.UID("pod-" + uid),
+			}},
 			Allocation: &resourceapi.AllocationResult{
 				Devices: resourceapi.DeviceAllocationResult{Results: []resourceapi.DeviceRequestAllocationResult{{
 					Request: "gpu",
@@ -183,9 +211,10 @@ func TestWrapHAMiCoreGpu(t *testing.T) {
 
 func TestHAMiPrepareWritesCDISpec(t *testing.T) {
 	ctx := context.Background()
-	s := newTestPrepareDeviceState(t)
+	claim := testHAMiClaim(t, "uid-a", 30, "4Gi")
+	s := newTestPrepareDeviceState(t, claim)
 
-	devices, err := s.Prepare(ctx, testHAMiClaim(t, "uid-a", 30, "4Gi"))
+	devices, err := s.Prepare(ctx, claim)
 	require.NoError(t, err)
 
 	require.Equal(t, []kubeletplugin.Device{{
@@ -231,11 +260,13 @@ func TestHAMiPrepareWritesCDISpec(t *testing.T) {
 
 func TestHAMiPrepareSharesDeviceAcrossClaims(t *testing.T) {
 	ctx := context.Background()
-	s := newTestPrepareDeviceState(t)
+	claimA := testHAMiClaim(t, "uid-a", 30, "4Gi")
+	claimB := testHAMiClaim(t, "uid-b", 50, "2Gi")
+	s := newTestPrepareDeviceState(t, claimA, claimB)
 
-	_, err := s.Prepare(ctx, testHAMiClaim(t, "uid-a", 30, "4Gi"))
+	_, err := s.Prepare(ctx, claimA)
 	require.NoError(t, err)
-	_, err = s.Prepare(ctx, testHAMiClaim(t, "uid-b", 50, "2Gi"))
+	_, err = s.Prepare(ctx, claimB)
 	require.NoError(t, err, "a HAMi-Core GPU already prepared for one claim must be preparable for another")
 
 	edits := claimDeviceEdits(t, s, "uid-b")
@@ -247,8 +278,8 @@ func TestHAMiPrepareSharesDeviceAcrossClaims(t *testing.T) {
 // PrepareStarted. The kubelet's retry must complete it.
 func TestHAMiPrepareResumesStartedClaim(t *testing.T) {
 	ctx := context.Background()
-	s := newTestPrepareDeviceState(t)
 	claim := testHAMiClaim(t, "uid-a", 30, "4Gi")
+	s := newTestPrepareDeviceState(t, claim)
 	require.NoError(t, s.updateCheckpoint(ctx, func(cp *Checkpoint) {
 		cp.V2.PreparedClaims["uid-a"] = PreparedClaim{
 			CheckpointState: ClaimCheckpointStatePrepareStarted,
@@ -269,8 +300,8 @@ func TestHAMiPrepareResumesStartedClaim(t *testing.T) {
 
 func TestHAMiUnprepareRemovesClaimState(t *testing.T) {
 	ctx := context.Background()
-	s := newTestPrepareDeviceState(t)
 	claim := testHAMiClaim(t, "uid-a", 30, "4Gi")
+	s := newTestPrepareDeviceState(t, claim)
 	_, err := s.Prepare(ctx, claim)
 	require.NoError(t, err)
 
