@@ -23,6 +23,43 @@ permissions:
   contents: read
 
 jobs:
+  monitor-build:
+    runs-on: ubuntu-latest
+    env:
+      HAMI_VGPUMONITOR_SOURCE: ${{ vars.HAMI_VGPUMONITOR_SOURCE || 'source' }}
+      HAMI_VGPUMONITOR_REF: ${{ vars.HAMI_VGPUMONITOR_REF || 'master' }}
+      HAMI_VGPUMONITOR_IMAGE: ${{ vars.HAMI_VGPUMONITOR_IMAGE || 'scratch' }}
+    steps:
+    - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
+      with:
+        submodules: recursive
+        persist-credentials: false
+
+    - name: Load monitor build arguments
+      id: args
+      run: |
+        make -f deploy/container/Makefile validate-monitor-image
+        echo "golang_version=$(make print-GOLANG_VERSION)" >> "${GITHUB_OUTPUT}"
+
+    - name: Set up Docker Buildx
+      uses: docker/setup-buildx-action@8d2750c68a42422c14e847fe6c8ac0403b4cbd6f # v3
+
+    - name: Build monitor packaging stage for both architectures
+      uses: docker/build-push-action@10e90e3645eae34f1e60eeb005ba3a3d33f178e8 # v6
+      with:
+        context: .
+        file: deploy/container/Dockerfile
+        target: vgpumonitor
+        platforms: linux/amd64,linux/arm64
+        push: false
+        cache-from: type=gha,scope=monitor
+        cache-to: type=gha,scope=monitor,mode=max
+        build-args: |
+          GOLANG_VERSION=${{ steps.args.outputs.golang_version }}
+          HAMI_VGPUMONITOR_SOURCE=${{ env.HAMI_VGPUMONITOR_SOURCE }}
+          HAMI_VGPUMONITOR_REF=${{ env.HAMI_VGPUMONITOR_REF }}
+          HAMI_VGPUMONITOR_IMAGE=${{ env.HAMI_VGPUMONITOR_IMAGE }}
+
   build:
     runs-on: ubuntu-latest
     steps:
@@ -39,8 +76,20 @@ jobs:
     - name: Build
       run: make build
 
+    - name: Install Helm for chart tests
+      env:
+        HELM_VERSION: v3.18.4
+      run: |
+        curl -fsSLo helm.tar.gz "https://get.helm.sh/helm-${HELM_VERSION}-linux-amd64.tar.gz"
+        curl -fsSLo helm.tar.gz.sha256sum "https://get.helm.sh/helm-${HELM_VERSION}-linux-amd64.tar.gz.sha256sum"
+        expected="$(awk '{print $1}' helm.tar.gz.sha256sum)"
+        echo "${expected}  helm.tar.gz" | sha256sum --check
+        tar -xzf helm.tar.gz linux-amd64/helm
+        sudo install linux-amd64/helm /usr/local/bin/helm
+        helm version --short
+
     - name: Test
-      run: make test
+      run: GOFLAGS=-count=1 make test
 
     - name: golangci-lint
       uses: golangci/golangci-lint-action@ba0d7d2ec06a0ea1cb5fa41b2e4a3ab91d21278a # v9

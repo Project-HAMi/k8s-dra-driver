@@ -9,6 +9,7 @@ require (
 	github.com/NVIDIA/k8s-dra-driver-gpu v0.0.0-20260304152636-db70fc24dd3f
 	github.com/NVIDIA/nvidia-container-toolkit v1.18.2
 	github.com/google/uuid v1.6.0
+	github.com/prometheus/client_golang v1.23.2
 	github.com/sirupsen/logrus v1.9.4
 	github.com/spf13/pflag v1.0.10
 	github.com/stretchr/testify v1.11.1
@@ -58,7 +59,6 @@ require (
 	github.com/opencontainers/runtime-tools v0.9.1-0.20251114084447-edf4cb3d2116 // indirect
 	github.com/pkg/errors v0.9.1 // indirect
 	github.com/pmezard/go-difflib v1.0.0 // indirect
-	github.com/prometheus/client_golang v1.23.2 // indirect
 	github.com/prometheus/client_model v0.6.2 // indirect
 	github.com/prometheus/common v0.66.1 // indirect
 	github.com/prometheus/procfs v0.16.1 // indirect

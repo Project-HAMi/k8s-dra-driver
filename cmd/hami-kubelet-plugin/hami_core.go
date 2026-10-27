@@ -17,18 +17,30 @@ limitations under the License.
 package main
 
 import (
+	"context"
+	"encoding/json"
 	"fmt"
 	"maps"
 	"os"
 	"path/filepath"
 	"slices"
 	"strconv"
+	"sync"
+	"time"
 
 	"github.com/Masterminds/semver"
-	"github.com/google/uuid"
 
+	corev1 "k8s.io/api/core/v1"
 	resourceapi "k8s.io/api/resource/v1"
+	apierrors "k8s.io/apimachinery/pkg/api/errors"
 	"k8s.io/apimachinery/pkg/api/resource"
+	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
+	"k8s.io/apimachinery/pkg/types"
+	"k8s.io/client-go/informers"
+	"k8s.io/client-go/kubernetes"
+	corelisters "k8s.io/client-go/listers/core/v1"
+	"k8s.io/client-go/tools/cache"
+	"k8s.io/client-go/util/retry"
 	"k8s.io/dynamic-resource-allocation/kubeletplugin"
 	"k8s.io/klog/v2"
 	"k8s.io/utils/ptr"
@@ -180,23 +192,94 @@ const hookPath = "/usr/local"
 // mounted at hookPath in this plugin's container.
 const hostHookPathEnvVar = "HAMI_HOST_HOOK_PATH"
 
+// Upstream vGPUmonitor uses this legacy label to select Pods for container metrics.
+const hamiMonitorNodeLabel = "hami.io/vgpu-node"
+
+// Persist claim ownership before CUDA creates its cache. The monitor only
+// scans *.cache files, so this marker must not use that suffix.
+const hamiCoreClaimMarkerPrefix = ".claim-"
+
 // For sharing.go
 type HAMiCoreManager struct {
 	// hostHookPath addresses the same tree as hookPath, but as seen from the
 	// host: CDI mount sources are resolved in the host mount namespace.
 	hostHookPath string
-	nvdevlib     *deviceLib
+	// containerHookPath is fixed to hookPath in production. Tests use a
+	// temporary tree to exercise cache operations without writing to /usr/local.
+	containerHookPath string
+	nvdevlib          *deviceLib
+	nodeName          string
+	clientset         kubernetes.Interface
+
+	podInformerFactory informers.SharedInformerFactory
+	podLister          corelisters.PodLister
+	podListerSynced    cache.InformerSynced
+	stopCh             chan struct{}
+	stopOnce           sync.Once
 }
 
-func NewHAMiCoreManager(deviceLib *deviceLib) *HAMiCoreManager {
-	hostHookPath := hookPath
-	if v := os.Getenv(hostHookPathEnvVar); v != "" {
-		hostHookPath = filepath.Clean(v)
+func NewHAMiCoreManager(deviceLib *deviceLib, hostHookPath string, clientset kubernetes.Interface, nodeName string) *HAMiCoreManager {
+	m := &HAMiCoreManager{
+		nvdevlib:          deviceLib,
+		hostHookPath:      filepath.Clean(hostHookPath),
+		containerHookPath: hookPath,
+		nodeName:          nodeName,
+		clientset:         clientset,
+		stopCh:            make(chan struct{}),
 	}
-	return &HAMiCoreManager{
-		nvdevlib:     deviceLib,
-		hostHookPath: hostHookPath,
+	if clientset != nil {
+		m.podInformerFactory = informers.NewSharedInformerFactoryWithOptions(
+			clientset,
+			30*time.Minute,
+			informers.WithTweakListOptions(func(lo *metav1.ListOptions) {
+				lo.FieldSelector = "spec.nodeName=" + nodeName
+			}),
+		)
+		podInformer := m.podInformerFactory.Core().V1().Pods()
+		m.podLister = podInformer.Lister()
+		m.podListerSynced = podInformer.Informer().HasSynced
+		m.podInformerFactory.Start(m.stopCh)
 	}
+	return m
+}
+
+// WaitForPodCacheSync blocks until the local Pod cache has synced for the first time.
+func (m *HAMiCoreManager) WaitForPodCacheSync(ctx context.Context) bool {
+	if m.podListerSynced == nil {
+		return true
+	}
+	return cache.WaitForCacheSync(ctx.Done(), m.podListerSynced)
+}
+
+// waitForPodCacheSyncAtStartup bounds the best-effort wait without stopping the
+// informer on timeout. Process cancellation instead stops it and aborts startup.
+func (m *HAMiCoreManager) waitForPodCacheSyncAtStartup(ctx context.Context) error {
+	const timeout = 30 * time.Second
+	syncCtx, cancel := context.WithTimeout(ctx, timeout)
+	defer cancel()
+
+	synced := m.WaitForPodCacheSync(syncCtx)
+	if err := ctx.Err(); err != nil {
+		m.Stop()
+		return err
+	}
+	if !synced {
+		klog.Warningf("HAMiCoreManager Pod cache did not sync within %s; continuing with live API lookups while the informer retries", timeout)
+	}
+	return nil
+}
+
+// Stop signals the informer to stop and waits for its workers and handlers.
+// All callers, including concurrent/repeated calls, wait for the same shutdown.
+func (m *HAMiCoreManager) Stop() {
+	m.stopOnce.Do(func() {
+		if m.stopCh != nil {
+			close(m.stopCh)
+		}
+		if m.podInformerFactory != nil {
+			m.podInformerFactory.Shutdown()
+		}
+	})
 }
 
 func (m *HAMiCoreManager) getConsumableCapacityMap(claim *resourceapi.ResourceClaim) map[string]map[resourceapi.QualifiedName]resource.Quantity {
@@ -211,27 +294,164 @@ func (m *HAMiCoreManager) getConsumableCapacityMap(claim *resourceapi.ResourceCl
 	return resMap
 }
 
-func (m *HAMiCoreManager) GetCDIContainerEdits(claim *resourceapi.ResourceClaim, devs AllocatableDevices) *cdiapi.ContainerEdits {
-	cacheFileDirectory := fmt.Sprintf("%s/vgpu/claims/%s", hookPath, claim.UID)
-	cacheFileHostDirectory := filepath.Join(m.hostHookPath, "vgpu", "claims", string(claim.UID))
-	// TODO: We should check the status of claim, becasue there may be two pod share the claim
-	var err error
-	err = os.RemoveAll(cacheFileDirectory)
-	if err != nil {
-		klog.Warningf("Failed to remove host directory for cachefile %s: %s", cacheFileDirectory, err)
+func podClaimAliasForResourceClaim(pod *corev1.Pod, resourceClaimName string) (string, error) {
+	for _, podClaim := range pod.Spec.ResourceClaims {
+		if podClaim.ResourceClaimName != nil && *podClaim.ResourceClaimName == resourceClaimName {
+			return podClaim.Name, nil
+		}
+
+		if podClaim.ResourceClaimTemplateName == nil {
+			continue
+		}
+		for _, claimStatus := range pod.Status.ResourceClaimStatuses {
+			if claimStatus.Name == podClaim.Name && claimStatus.ResourceClaimName != nil && *claimStatus.ResourceClaimName == resourceClaimName {
+				return podClaim.Name, nil
+			}
+		}
 	}
-	err = os.MkdirAll(cacheFileDirectory, 0777)
-	if err != nil {
-		klog.Warningf("Failed to create host directory for cachefile %s: %s", cacheFileDirectory, err)
+
+	return "", fmt.Errorf("pod %s/%s does not reference ResourceClaim %s", pod.Namespace, pod.Name, resourceClaimName)
+}
+
+func containerNameForPodClaimAlias(containers []corev1.Container, claimAlias string) string {
+	for _, container := range containers {
+		for _, claim := range container.Resources.Claims {
+			if claim.Name == claimAlias {
+				return container.Name
+			}
+		}
 	}
-	err = os.Chmod(cacheFileDirectory, 0777)
+	return ""
+}
+
+// resolveClaimToPod searches the local Pod informer cache, falling back to a
+// live lookup on a cache miss. Validate the reserving Pod's UID and node before
+// mapping the claim to its regular or init container.
+func (m *HAMiCoreManager) resolveClaimToPod(ctx context.Context, claim *resourceapi.ResourceClaim) (*corev1.Pod, string, error) {
+	if m.podLister == nil {
+		return nil, "", fmt.Errorf("pod lister not initialized")
+	}
+	if len(claim.Status.ReservedFor) == 0 {
+		return nil, "", fmt.Errorf("claim %s has no ReservedFor entries", claim.UID)
+	}
+
+	// Find the Pod that reserved this claim.
+	consumer := claim.Status.ReservedFor[0]
+	if consumer.Resource != "pods" {
+		return nil, "", fmt.Errorf("claim %s reservedFor[0] is not a Pod", claim.UID)
+	}
+
+	pod, err := m.podLister.Pods(claim.Namespace).Get(consumer.Name)
+	if apierrors.IsNotFound(err) && m.clientset != nil {
+		pod, err = m.clientset.CoreV1().Pods(claim.Namespace).Get(ctx, consumer.Name, metav1.GetOptions{})
+		if err != nil {
+			return nil, "", fmt.Errorf("get pod %s/%s after local cache miss: %w", claim.Namespace, consumer.Name, err)
+		}
+	}
 	if err != nil {
-		klog.Warningf("Failed to change mod of host directory for cachefile %s: %s", cacheFileDirectory, err)
+		return nil, "", fmt.Errorf("pod %s/%s not found in local cache: %w", claim.Namespace, consumer.Name, err)
+	}
+	if pod.UID != consumer.UID {
+		return nil, "", fmt.Errorf("pod %s/%s UID %s does not match claim consumer UID %s", claim.Namespace, consumer.Name, pod.UID, consumer.UID)
+	}
+	if m.nodeName == "" || pod.Spec.NodeName != m.nodeName {
+		return nil, "", fmt.Errorf("pod %s/%s is assigned to node %q, not %q", claim.Namespace, consumer.Name, pod.Spec.NodeName, m.nodeName)
+	}
+
+	claimAlias, err := podClaimAliasForResourceClaim(pod, claim.Name)
+	if err != nil {
+		return nil, "", err
+	}
+
+	// HAMi DRA design guarantees one claim per container, but check both
+	// regular and init containers to resolve the exact consumer.
+	containerName := containerNameForPodClaimAlias(pod.Spec.Containers, claimAlias)
+	if containerName == "" {
+		containerName = containerNameForPodClaimAlias(pod.Spec.InitContainers, claimAlias)
+	}
+	if containerName == "" {
+		return nil, "", fmt.Errorf("no container in pod %s/%s references PodResourceClaim %s for ResourceClaim %s", claim.Namespace, pod.Name, claimAlias, claim.Name)
+	}
+
+	return pod, containerName, nil
+}
+
+// ensurePodMonitorLabel uses the live Pod, not the informer snapshot, so retries
+// and other claims on the same Pod see the latest labels. UID and resourceVersion
+// in the patch protect against Pod replacement and concurrent metadata changes.
+func (m *HAMiCoreManager) ensurePodMonitorLabel(ctx context.Context, pod *corev1.Pod) error {
+	if m.clientset == nil || m.nodeName == "" {
+		return fmt.Errorf("pod client and node name are required for vGPUmonitor labeling")
+	}
+	err := retry.RetryOnConflict(retry.DefaultBackoff, func() error {
+		live, err := m.clientset.CoreV1().Pods(pod.Namespace).Get(ctx, pod.Name, metav1.GetOptions{})
+		if err != nil {
+			return err
+		}
+		if live.UID != pod.UID {
+			return fmt.Errorf("pod UID changed from %s to %s", pod.UID, live.UID)
+		}
+		if live.Spec.NodeName != m.nodeName {
+			return fmt.Errorf("pod is assigned to node %q, not %q", live.Spec.NodeName, m.nodeName)
+		}
+		if current := live.Labels[hamiMonitorNodeLabel]; current != "" {
+			if current != m.nodeName {
+				return fmt.Errorf("conflicting %s label %q, expected %q", hamiMonitorNodeLabel, current, m.nodeName)
+			}
+			return nil
+		}
+		patch, err := json.Marshal(map[string]interface{}{
+			"metadata": map[string]interface{}{
+				"uid": live.UID, "resourceVersion": live.ResourceVersion,
+				"labels": map[string]string{hamiMonitorNodeLabel: m.nodeName},
+			},
+		})
+		if err != nil {
+			return err
+		}
+		_, err = m.clientset.CoreV1().Pods(pod.Namespace).Patch(ctx, pod.Name, types.MergePatchType, patch, metav1.PatchOptions{})
+		return err
+	})
+	if err != nil {
+		return fmt.Errorf("label Pod %s/%s for vGPUmonitor: %w", pod.Namespace, pod.Name, err)
+	}
+	return nil
+}
+
+func (m *HAMiCoreManager) GetCDIContainerEdits(ctx context.Context, claim *resourceapi.ResourceClaim, devs AllocatableDevices) (*cdiapi.ContainerEdits, error) {
+	pod, containerName, err := m.resolveClaimToPod(ctx, claim)
+	if err != nil {
+		return nil, fmt.Errorf("resolve claim %s to pod/container: %w", claim.UID, err)
+	}
+	if err := m.ensurePodMonitorLabel(ctx, pod); err != nil {
+		// Do not alter cache directories or return successful preparation when
+		// a resolved workload cannot be made discoverable by the monitor.
+		return nil, err
+	}
+
+	podUID := string(pod.UID)
+	cacheFileHostDirectory := filepath.Join(m.hostHookPath, "vgpu", "containers", podUID+"_"+containerName)
+	cacheFileDirectory := filepath.Join(m.containerHookPath, "vgpu", "containers", podUID+"_"+containerName)
+	cacheFilePath := filepath.Join(cacheFileDirectory, string(claim.UID)+".cache")
+
+	// Clean up and recreate the directory for this pod+container.
+	if err := os.RemoveAll(cacheFileDirectory); err != nil {
+		return nil, fmt.Errorf("remove cache directory %s: %w", cacheFileDirectory, err)
+	}
+	if err := os.MkdirAll(cacheFileDirectory, 0777); err != nil {
+		return nil, fmt.Errorf("create cache directory %s: %w", cacheFileDirectory, err)
+	}
+	if err := os.Chmod(cacheFileDirectory, 0777); err != nil {
+		return nil, fmt.Errorf("chmod cache directory %s: %w", cacheFileDirectory, err)
+	}
+	marker := filepath.Join(cacheFileDirectory, hamiCoreClaimMarkerPrefix+string(claim.UID))
+	if err := os.WriteFile(marker, nil, 0600); err != nil {
+		return nil, fmt.Errorf("record claim ownership in %s: %w", marker, err)
 	}
 
 	hamiEnvs := []string{}
 	// TOOD: Get SM Limit from Claim's Annotation
-	hamiEnvs = append(hamiEnvs, fmt.Sprintf("CUDA_DEVICE_MEMORY_SHARED_CACHE=%s", fmt.Sprintf("%s/%v.cache", cacheFileDirectory, uuid.New().String())))
+	hamiEnvs = append(hamiEnvs, fmt.Sprintf("CUDA_DEVICE_MEMORY_SHARED_CACHE=%s", cacheFilePath))
 
 	devCapMap := m.getConsumableCapacityMap(claim)
 	idx := 0
@@ -274,7 +494,7 @@ func (m *HAMiCoreManager) GetCDIContainerEdits(claim *resourceapi.ResourceClaim,
 					Options:       []string{"rw", "nosuid", "nodev", "bind"},
 				},
 				{
-					ContainerPath: hookPath + "/vgpu/libvgpu.so",
+					ContainerPath: filepath.Join(hookPath, "vgpu", "libvgpu.so"),
 					HostPath:      filepath.Join(m.hostHookPath, "vgpu", "libvgpu.so"),
 					Options:       []string{"ro", "nosuid", "nodev", "bind"},
 				},
@@ -291,12 +511,62 @@ func (m *HAMiCoreManager) GetCDIContainerEdits(claim *resourceapi.ResourceClaim,
 				},
 			},
 		},
-	}
+	}, nil
 }
 
+// Unprepare removes cache state at claim release or abandoned preparation, not
+// at startup or during layout migration: legacy mounts may still be in use.
 func (m *HAMiCoreManager) Unprepare(claimUID string, pl PreparedDeviceList) error {
-	path := fmt.Sprintf("%s/vgpu/claims/%s", hookPath, claimUID)
-	_ = os.RemoveAll(path)
+	if !filepath.IsLocal(claimUID) || filepath.Base(claimUID) != claimUID || claimUID == "." {
+		return fmt.Errorf("invalid claim UID %q for cache cleanup", claimUID)
+	}
+
+	// Completed pre-upgrade claims retain their original CDI cache mounts.
+	// Remove only this claim's legacy path, even if containers/ does not exist.
+	legacyDirectory := filepath.Join(m.containerHookPath, "vgpu", "claims", claimUID)
+	if err := os.RemoveAll(legacyDirectory); err != nil {
+		return fmt.Errorf("remove legacy claim cache directory %s: %w", legacyDirectory, err)
+	}
+
+	containersPath := filepath.Join(m.containerHookPath, "vgpu", "containers")
+	entries, err := os.ReadDir(containersPath)
+	if err != nil {
+		if os.IsNotExist(err) {
+			return nil
+		}
+		return fmt.Errorf("failed to list containers path %s: %w", containersPath, err)
+	}
+	for _, entry := range entries {
+		if !entry.IsDir() {
+			continue
+		}
+		directory := filepath.Join(containersPath, entry.Name())
+		owned := false
+		// Keep accepting cache-file ownership for preparations made before the
+		// marker was introduced. Never infer ownership from an empty directory.
+		for _, name := range []string{hamiCoreClaimMarkerPrefix + claimUID, claimUID + ".cache"} {
+			path := filepath.Join(directory, name)
+			info, err := os.Lstat(path)
+			if os.IsNotExist(err) {
+				continue
+			}
+			if err != nil {
+				return fmt.Errorf("inspect claim ownership %s: %w", path, err)
+			}
+			if !info.Mode().IsRegular() {
+				return fmt.Errorf("claim ownership path %s is not a regular file", path)
+			}
+			owned = true
+			break
+		}
+		if !owned {
+			continue
+		}
+		if err := os.RemoveAll(directory); err != nil {
+			return fmt.Errorf("failed to remove container cache directory %s: %w", directory, err)
+		}
+		klog.V(4).Infof("Unprepare: removed HAMi-Core cache directory %s for claim %s", directory, claimUID)
+	}
 	return nil
 }
 
