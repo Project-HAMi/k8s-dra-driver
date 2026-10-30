@@ -95,7 +95,6 @@ func (d *HAMiGpuInfo) GetDevice() resourceapi.Device {
 			"pcieBusID": {
 				StringValue: &d.pcieBusID,
 			},
-			d.pcieRootAttr.Name: d.pcieRootAttr.Value,
 		},
 		Capacity: map[resourceapi.QualifiedName]resourceapi.DeviceCapacity{
 			"cores": {
@@ -122,6 +121,9 @@ func (d *HAMiGpuInfo) GetDevice() resourceapi.Device {
 			},
 		},
 		AllowMultipleAllocations: &allowed,
+	}
+	if d.pcieRootAttr != nil {
+		device.Attributes[d.pcieRootAttr.Name] = d.pcieRootAttr.Value
 	}
 	return device
 }
