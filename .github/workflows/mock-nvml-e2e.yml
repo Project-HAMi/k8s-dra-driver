@@ -1,0 +1,66 @@
+name: "Mock NVML E2E"
+
+# Only changes that can affect the driver image, the chart or the suite.
+on:
+  push:
+    branches: [ main ]
+    paths: &e2e-paths
+      - 'cmd/**'
+      - 'pkg/**'
+      - 'lib/**'
+      - 'chart/**'
+      - 'deploy/**'
+      - 'scripts/**'
+      - 'hack/ci/mock-nvml/**'
+      - 'tests/bats/**'
+      - '.github/workflows/mock-nvml-e2e.yml'
+      - 'go.mod'
+      - 'go.sum'
+      - 'versions.mk'
+      - 'common.mk'
+      - 'Makefile'
+  pull_request:
+    branches: [ main ]
+    types:
+      - opened
+      - synchronize
+      - reopened
+      - ready_for_review
+    paths: *e2e-paths
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+# A new push to a PR cancels its run that is still going.
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+
+jobs:
+  mock-gpu-e2e:
+    # GPU-less: Mokka mocks NVML, the driver root and the device nodes.
+    runs-on: ubuntu-latest
+    timeout-minutes: 60
+    # Build vGPUmonitor the same way as the CI workflow.
+    env:
+      HAMI_VGPUMONITOR_SOURCE: ${{ vars.HAMI_VGPUMONITOR_SOURCE || 'source' }}
+      HAMI_VGPUMONITOR_REF: ${{ vars.HAMI_VGPUMONITOR_REF || 'master' }}
+      HAMI_VGPUMONITOR_IMAGE: ${{ vars.HAMI_VGPUMONITOR_IMAGE || 'scratch' }}
+    steps:
+    - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
+      with:
+        submodules: recursive
+        persist-credentials: false
+
+    # kind, kubectl, helm and jq come with the runner image.
+    - name: Run mock NVML e2e tests
+      run: hack/ci/mock-nvml/e2e-test.sh
+
+    - name: Upload logs
+      if: failure()
+      uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+      with:
+        name: mock-nvml-e2e-logs
+        path: /tmp/hami-e2e-artifacts
+        retention-days: 7

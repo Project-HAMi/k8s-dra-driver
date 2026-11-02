@@ -214,7 +214,7 @@ Feature gates are controlled at runtime via the `--feature-gates` CLI flag. They
 1.  **Specification:** Update this document if a new component (Agent) is introduced or an interface changes.
 2.  **Plan:** Describe how agents will interact to fulfill a feature (e.g., how `Driver` calls `HAMiCoreManager` to inject resource limits into CDI edits).
 3.  **Implement:** Code changes must match the agent's defined scope in Part 2.
-4.  **Verify:** Use `demo/yaml/` for end-to-end validation of agent coordination.
+4.  **Verify:** Run `hack/ci/mock-nvml/e2e-test.sh` (BATS suite in `tests/bats/` on kind + Mokka, no GPU needed; see `tests/bats/README.md`) for end-to-end validation of agent coordination. Use `demo/yaml/` on a real GPU for what Mokka cannot cover, such as CUDA-level limit enforcement.
 
 ### Commit Guidelines
 *   Messages should be concise and explain the "why".
