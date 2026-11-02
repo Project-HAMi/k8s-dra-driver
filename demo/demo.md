@@ -64,6 +64,13 @@ upgrading an existing demo installation.
 
 ## Experience HAMi-Core DRA
 
+Follow the [ResourceClaim limitations](../README.md#resourceclaim-limitations):
+use a separate HAMi-Core claim for each consuming container, with at most one
+HAMi-Core claim per container. Do not reuse a claim across Pods or containers,
+including init containers. This also applies to template-generated claims;
+the driver does not yet fully enforce these restrictions. Separate claims can
+still share physical GPU capacity.
+
 Images should be loaded into cluster before creating the pod first.
 
 ```Bash
