@@ -42,21 +42,20 @@ RUN mkdir -p /k8s-dra-driver/lib/local/lib/hami
 RUN mv /k8s-dra-driver/lib/hami-core/build/libvgpu.so /k8s-dra-driver/lib/local/lib/hami
 RUN mv /k8s-dra-driver/lib/nvidia/ld.so.preload /k8s-dra-driver/lib/local/lib/hami
 
-# Run build with binaries native to the current build platform.
-FROM --platform=${BUILDPLATFORM} nvcr.io/nvidia/base/ubuntu:jammy-20251013 AS build
+# Go and cross-compiler toolchain, native to the current build platform. It
+# declares no TARGETARCH, so a multi-platform build shares these layers instead
+# of repeating them once per target.
+FROM --platform=${BUILDPLATFORM} nvcr.io/nvidia/base/ubuntu:jammy-20251013 AS go-toolchain
 
 # Require arg to be provided (set invalid default value).
 ARG GOLANG_VERSION=x.x.x
 
-# BUILDARCH, TARGETARCH (and others) are defined in the global scope by
-# BuildKit. BUILDARCH is the architecture of the build platform. TARGETARCH is
-# set via the --platform arg provided to the `docker buildx build ...` command.
-# Redefining those variables here without new values makes the outer-context
-# values available to in-stage RUN commands. Arch values are of the form
-# amd64/arm64. A classic builder leaves them empty; the RUN commands below then
-# fall back to the build host's architecture.
+# BUILDARCH (and others) are defined in the global scope by BuildKit. BUILDARCH
+# is the architecture of the build platform. Redefining it here without a new
+# value makes the outer-context value available to in-stage RUN commands. Arch
+# values are of the form amd64/arm64. A classic builder leaves it empty; the RUN
+# commands below then fall back to the build host's architecture.
 ARG BUILDARCH
-ARG TARGETARCH
 
 # Install dependencies for Go build. Do not clear apt cache (does not
 # leak into prod stage).
@@ -77,6 +76,14 @@ RUN arch="${BUILDARCH:-$(uname -m | sed -e 's,aarch64,arm64,' -e 's,x86_64,amd64
 
 ENV GOPATH=/go
 ENV PATH=$GOPATH/bin:/usr/local/go/bin:$PATH
+
+# Run build with binaries native to the current build platform.
+FROM go-toolchain AS build
+
+# TARGETARCH is set via the --platform arg provided to the `docker buildx build
+# ...` command. Declaring it starts the per-target part of the build.
+ARG TARGETARCH
+
 WORKDIR /build
 
 # Copy everything that is needed for the go build, but do not invalidate go
@@ -106,15 +113,21 @@ RUN arch="${TARGETARCH:-$(uname -m | sed -e 's,aarch64,arm64,' -e 's,x86_64,amd6
     make CC=${cc} GOARCH=${arch} PREFIX=/artifacts cmds
 
 # Build only the monitor, not HAMi's scheduler, image or HAMi-Core submodule.
+# It starts from the toolchain rather than the driver build, so driver source
+# changes neither rebuild the monitor nor invalidate its cache.
 # BuildKit tracks the remote Git ref, so a moving master is refreshed even when
 # the downstream source has not changed. Pin REF to a commit for repeatability.
-FROM build AS vgpumonitor-source
+FROM go-toolchain AS vgpumonitor-source
 ARG HAMI_VGPUMONITOR_REF=master
-ARG TARGETARCH
 ADD --keep-git-dir=true https://github.com/Project-HAMi/HAMi.git#${HAMI_VGPUMONITOR_REF} /monitor-src
 WORKDIR /monitor-src
 # Go's automatic toolchain selection honors the upstream go.mod independently
-# of this driver's older Go requirement. CGO uses the target cross-compiler.
+# of this driver's older Go requirement. Fetch that toolchain and the monitor's
+# modules before TARGETARCH is declared, so all targets share one download.
+ENV GOTOOLCHAIN=auto
+RUN go list -deps ./cmd/vGPUmonitor > /dev/null
+ARG TARGETARCH
+# CGO uses the target cross-compiler.
 RUN arch="${TARGETARCH:-$(uname -m | sed -e 's,aarch64,arm64,' -e 's,x86_64,amd64,')}" && \
     case "$arch" in \
         amd64) cc=x86_64-linux-gnu-gcc ;; \
@@ -123,7 +136,7 @@ RUN arch="${TARGETARCH:-$(uname -m | sed -e 's,aarch64,arm64,' -e 's,x86_64,amd6
     esac && \
     revision="$(git rev-parse HEAD)" && echo "Building vGPUmonitor from HAMi ${revision}" && \
     mkdir -p /k8s-vgpu/bin && \
-    CGO_ENABLED=1 GOOS=linux GOARCH=${arch} CC=${cc} GOTOOLCHAIN=auto \
+    CGO_ENABLED=1 GOOS=linux GOARCH=${arch} CC=${cc} \
     go build -trimpath -ldflags "-s -w -X github.com/Project-HAMi/HAMi/pkg/version.revision=${revision}" \
         -o /k8s-vgpu/bin/vGPUmonitor ./cmd/vGPUmonitor
 
