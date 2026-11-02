@@ -56,6 +56,13 @@ iupgrade_wait() {
         --wait --timeout 5m "${args[@]}" "$@"
     # Helm 3 does not wait for a DaemonSet whose maxUnavailable covers every pod.
     kubectl rollout status -n "${DRIVER_NAMESPACE}" daemonset/hami-dra-driver-kubelet-plugin --timeout=5m
+    # The DaemonSet is ready before the plugin publishes its first
+    # ResourceSlice, so wait for the devices too.
+    local deadline=$((SECONDS + 120))
+    until [[ -n "$(hami_devices)" ]]; do
+        (( SECONDS < deadline )) || { echo "no ${DRIVER_NAME} devices published" >&2; return 1; }
+        sleep 2
+    done
 }
 
 # Mokka's nvidia-smi on the kind node. Its output is the ground truth that the
