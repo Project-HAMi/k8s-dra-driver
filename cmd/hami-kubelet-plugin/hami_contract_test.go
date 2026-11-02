@@ -183,6 +183,7 @@ func TestHAMiGpuInfoGetDevice(t *testing.T) {
 
 	require.Equal(t, "hami-gpu-0", device.Name)
 	require.Equal(t, HAMiGpuDeviceType, *device.Attributes["type"].StringValue)
+	require.Equal(t, "pci0000:00", *device.Attributes[deviceattribute.StandardDeviceAttributePCIeRoot].StringValue)
 	require.True(t, *device.AllowMultipleAllocations, "HAMi-Core GPUs must be shareable across claims")
 
 	cores := device.Capacity["cores"]
@@ -198,6 +199,19 @@ func TestHAMiGpuInfoGetDevice(t *testing.T) {
 	require.Equal(t, int64(1<<20), memory.RequestPolicy.ValidRange.Min.Value())
 	require.Equal(t, int64(testGPUMemory), memory.RequestPolicy.ValidRange.Max.Value())
 	require.Equal(t, int64(1<<20), memory.RequestPolicy.ValidRange.Step.Value())
+}
+
+func TestHAMiGpuInfoGetDeviceWithoutPCIeRoot(t *testing.T) {
+	gpu := testHAMiGpu()
+	gpu.HAMiGpu.pcieRootAttr = nil
+
+	device := gpu.GetDevice()
+
+	require.NotContains(t, device.Attributes, deviceattribute.StandardDeviceAttributePCIeRoot)
+	require.Equal(t, gpu.UUID(), *device.Attributes["uuid"].StringValue)
+	memory := device.Capacity["memory"]
+	require.Equal(t, int64(testGPUMemory), memory.Value.Value())
+	require.True(t, *device.AllowMultipleAllocations, "HAMi-Core GPUs must remain shareable without PCIe root metadata")
 }
 
 func TestWrapHAMiCoreGpu(t *testing.T) {
