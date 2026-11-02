@@ -22,6 +22,13 @@ The list of prerequisites for running the DRA Driver for HAMi-Core is described 
 
 Please check the [DaemonSet configuration](demo/yaml/ds.yaml) in the demo/yaml directory. We are working on a Helm Chart for this DRA Driver, it will be available in the near future.
 
+## ResourceClaim limitations
+
+Sharing a HAMi-Core (`hami-gpu`) ResourceClaim across Pods or containers is
+unsupported, including regular and init containers. Each container may use at
+most one HAMi-Core claim. These restrictions also apply to template-generated
+claims. Separate claims may still share physical GPU capacity.
+
 ## Demo
 
 ```yaml
