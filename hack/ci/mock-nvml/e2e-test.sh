@@ -106,8 +106,11 @@ for tool in "${tools[@]}"; do
 done
 
 # Checked before the build, which takes minutes. Local runs may share the name
-# with a cluster still in use, so it is only deleted when asked.
-if kind get clusters | grep -qx "${KIND_CLUSTER_NAME}"; then
+# with a cluster still in use, so it is only deleted when asked. The list is
+# read in full first: grep -q in a pipe can kill kind with SIGPIPE, which
+# pipefail would turn into "not found".
+clusters="$(kind get clusters)"
+if grep -qx "${KIND_CLUSTER_NAME}" <<<"${clusters}"; then
     if [[ "${RECREATE_CLUSTER}" != "true" ]]; then
         echo "kind cluster ${KIND_CLUSTER_NAME} exists; delete it or set RECREATE_CLUSTER=true" >&2
         exit 1
@@ -123,9 +126,11 @@ if [[ "${SKIP_IMAGE_BUILD}" != "true" ]]; then
 fi
 
 log "creating kind cluster ${KIND_CLUSTER_NAME} (${KIND_NODE_IMAGE})"
-trap cleanup EXIT
 kind create cluster --name "${KIND_CLUSTER_NAME}" --image "${KIND_NODE_IMAGE}" \
     --config "${SCRIPT_DIR}/kind.yaml" --wait 2m
+# Set only once the cluster is ours: a failed create removes its own nodes,
+# and the name may belong to a cluster created by someone else meanwhile.
+trap cleanup EXIT
 kind load docker-image "${TEST_IMAGE}" --name "${KIND_CLUSTER_NAME}"
 
 log "installing Mokka ${MOKKA_VERSION} (${GPU_PROFILE})"
