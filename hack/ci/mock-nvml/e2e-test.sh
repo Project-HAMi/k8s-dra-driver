@@ -18,10 +18,12 @@
 # driver and GPUs, builds the driver image from this tree, and runs the BATS
 # suite under tests/bats, which installs the driver with its Helm chart.
 #
-# Requires docker, git, kind, kubectl, helm and jq.
+# Requires docker, git, kind, kubectl, helm and jq, plus make and go to build
+# the image.
 #
 # Environment:
-#   KIND_CLUSTER_NAME  kind cluster to create; an existing one is replaced (hami-e2e)
+#   KIND_CLUSTER_NAME  kind cluster to create (hami-e2e)
+#   RECREATE_CLUSTER   delete an existing cluster of that name instead of failing (false)
 #   KIND_NODE_IMAGE    Kubernetes version under test, the oldest supported (kindest/node:v1.34.2)
 #   MOKKA_VERSION      Mokka (nvml-mock) chart version (0.5.1)
 #   GPU_PROFILE        Mokka GPU profile (t4)
@@ -36,6 +38,7 @@ SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 REPO_ROOT="$(cd "${SCRIPT_DIR}/../../.." && pwd)"
 
 : "${KIND_CLUSTER_NAME:=hami-e2e}"
+: "${RECREATE_CLUSTER:=false}"
 : "${KIND_NODE_IMAGE:=kindest/node:v1.34.2}"
 : "${MOKKA_VERSION:=0.5.1}"
 : "${GPU_PROFILE:=t4}"
@@ -93,9 +96,24 @@ cleanup() {
     exit "${rc}"
 }
 
-for tool in docker git kind kubectl helm jq; do
+tools=(docker git kind kubectl helm jq)
+if [[ "${SKIP_IMAGE_BUILD}" != "true" ]]; then
+    # versions.mk runs go to find the toolkit image.
+    tools+=(make go)
+fi
+for tool in "${tools[@]}"; do
     command -v "${tool}" >/dev/null || { echo "${tool} is required" >&2; exit 1; }
 done
+
+# Checked before the build, which takes minutes. Local runs may share the name
+# with a cluster still in use, so it is only deleted when asked.
+if kind get clusters | grep -qx "${KIND_CLUSTER_NAME}"; then
+    if [[ "${RECREATE_CLUSTER}" != "true" ]]; then
+        echo "kind cluster ${KIND_CLUSTER_NAME} exists; delete it or set RECREATE_CLUSTER=true" >&2
+        exit 1
+    fi
+    kind delete cluster --name "${KIND_CLUSTER_NAME}"
+fi
 install_bats
 
 if [[ "${SKIP_IMAGE_BUILD}" != "true" ]]; then
@@ -105,7 +123,6 @@ if [[ "${SKIP_IMAGE_BUILD}" != "true" ]]; then
 fi
 
 log "creating kind cluster ${KIND_CLUSTER_NAME} (${KIND_NODE_IMAGE})"
-kind delete cluster --name "${KIND_CLUSTER_NAME}"
 trap cleanup EXIT
 kind create cluster --name "${KIND_CLUSTER_NAME}" --image "${KIND_NODE_IMAGE}" \
     --config "${SCRIPT_DIR}/kind.yaml" --wait 2m

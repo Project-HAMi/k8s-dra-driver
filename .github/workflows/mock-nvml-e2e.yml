@@ -11,7 +11,7 @@ on:
       - 'chart/**'
       - 'deploy/**'
       - 'scripts/**'
-      - 'hack/ci/mock-nvml/**'
+      - 'hack/**'
       - 'tests/bats/**'
       - '.github/workflows/mock-nvml-e2e.yml'
       - 'go.mod'

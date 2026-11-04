@@ -18,8 +18,10 @@ suite without a GPU, which is also what CI runs. It builds the driver image
 from this tree, creates the kind cluster `hami-e2e`, installs
 [Mokka](https://github.com/NVIDIA/k8s-test-infra) to mock NVML, the driver root
 and the device nodes, runs every `tests/bats/*.bats` file, and deletes the
-cluster. It needs docker, git, kind, kubectl, helm and jq, and fetches pinned
-versions of bats itself. The header of the script lists its settings.
+cluster. It stops if that cluster already exists, unless
+`RECREATE_CLUSTER=true`. It needs docker, git, kind, kubectl, helm and jq,
+plus make and go to build the image, and fetches pinned versions of bats
+itself. The header of the script lists its settings.
 
 ```bash
 hack/ci/mock-nvml/e2e-test.sh
