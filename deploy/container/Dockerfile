@@ -118,8 +118,9 @@ RUN arch="${TARGETARCH:-$(uname -m | sed -e 's,aarch64,arm64,' -e 's,x86_64,amd6
 # BuildKit tracks the remote Git ref, so a moving master is refreshed even when
 # the downstream source has not changed. Pin REF to a commit for repeatability.
 FROM go-toolchain AS vgpumonitor-source
+ARG HAMI_VGPUMONITOR_REPO=https://github.com/Project-HAMi/HAMi.git
 ARG HAMI_VGPUMONITOR_REF=master
-ADD --keep-git-dir=true https://github.com/Project-HAMi/HAMi.git#${HAMI_VGPUMONITOR_REF} /monitor-src
+ADD --keep-git-dir=true ${HAMI_VGPUMONITOR_REPO}#${HAMI_VGPUMONITOR_REF} /monitor-src
 WORKDIR /monitor-src
 # Go's automatic toolchain selection honors the upstream go.mod independently
 # of this driver's older Go requirement. Fetch that toolchain and the monitor's
@@ -134,7 +135,7 @@ RUN arch="${TARGETARCH:-$(uname -m | sed -e 's,aarch64,arm64,' -e 's,x86_64,amd6
         arm64) cc=aarch64-linux-gnu-gcc ;; \
         *) echo "unsupported monitor architecture: $arch" >&2; exit 1 ;; \
     esac && \
-    revision="$(git rev-parse HEAD)" && echo "Building vGPUmonitor from HAMi ${revision}" && \
+    revision="$(git rev-parse HEAD)" && echo "Building vGPUmonitor from ${HAMI_VGPUMONITOR_REPO} at ${revision}" && \
     mkdir -p /k8s-vgpu/bin && \
     CGO_ENABLED=1 GOOS=linux GOARCH=${arch} CC=${cc} \
     go build -trimpath -ldflags "-s -w -X github.com/Project-HAMi/HAMi/pkg/version.revision=${revision}" \

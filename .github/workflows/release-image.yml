@@ -15,6 +15,10 @@ on:
         options:
           - source
           - image
+      monitor_repo:
+        description: 'HAMi Git repository URL; defaults to upstream Project-HAMi/HAMi'
+        required: false
+        type: string
       monitor_ref:
         description: 'HAMi branch, tag or commit; defaults to master'
         required: false
@@ -32,6 +36,7 @@ jobs:
     env:
       IMAGE_NAME: ${{ 'projecthami/k8s-dra-driver' }}
       HAMI_VGPUMONITOR_SOURCE: ${{ inputs.monitor_source || vars.HAMI_VGPUMONITOR_SOURCE || 'source' }}
+      HAMI_VGPUMONITOR_REPO: ${{ inputs.monitor_repo || vars.HAMI_VGPUMONITOR_REPO || 'https://github.com/Project-HAMi/HAMi.git' }}
       HAMI_VGPUMONITOR_REF: ${{ inputs.monitor_ref || vars.HAMI_VGPUMONITOR_REF || 'master' }}
       HAMI_VGPUMONITOR_IMAGE: ${{ inputs.monitor_image || vars.HAMI_VGPUMONITOR_IMAGE || 'scratch' }}
     runs-on: ubuntu-latest
@@ -74,6 +79,7 @@ jobs:
           echo "toolkit_container_image=$(make print-TOOLKIT_CONTAINER_IMAGE)"
           echo "hami_core_build_image=$(make print-HAMI_CORE_BUILD_IMAGE)"
           echo "hami_vgpumonitor_source=$(make print-HAMI_VGPUMONITOR_SOURCE)"
+          echo "hami_vgpumonitor_repo=$(make print-HAMI_VGPUMONITOR_REPO)"
           echo "hami_vgpumonitor_ref=$(make print-HAMI_VGPUMONITOR_REF)"
           echo "hami_vgpumonitor_image=$(make print-HAMI_VGPUMONITOR_IMAGE)"
           echo "git_commit=$(make print-GIT_COMMIT)"
@@ -96,6 +102,7 @@ jobs:
           TOOLKIT_CONTAINER_IMAGE=${{ steps.args.outputs.toolkit_container_image }}
           HAMI_CORE_BUILD_IMAGE=${{ steps.args.outputs.hami_core_build_image }}
           HAMI_VGPUMONITOR_SOURCE=${{ steps.args.outputs.hami_vgpumonitor_source }}
+          HAMI_VGPUMONITOR_REPO=${{ steps.args.outputs.hami_vgpumonitor_repo }}
           HAMI_VGPUMONITOR_REF=${{ steps.args.outputs.hami_vgpumonitor_ref }}
           HAMI_VGPUMONITOR_IMAGE=${{ steps.args.outputs.hami_vgpumonitor_image }}
           VERSION=${{ steps.args.outputs.version }}

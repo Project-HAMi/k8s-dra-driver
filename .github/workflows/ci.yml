@@ -27,6 +27,7 @@ jobs:
     runs-on: ubuntu-latest
     env:
       HAMI_VGPUMONITOR_SOURCE: ${{ vars.HAMI_VGPUMONITOR_SOURCE || 'source' }}
+      HAMI_VGPUMONITOR_REPO: ${{ vars.HAMI_VGPUMONITOR_REPO || 'https://github.com/Project-HAMi/HAMi.git' }}
       HAMI_VGPUMONITOR_REF: ${{ vars.HAMI_VGPUMONITOR_REF || 'master' }}
       HAMI_VGPUMONITOR_IMAGE: ${{ vars.HAMI_VGPUMONITOR_IMAGE || 'scratch' }}
     steps:
@@ -57,6 +58,7 @@ jobs:
         build-args: |
           GOLANG_VERSION=${{ steps.args.outputs.golang_version }}
           HAMI_VGPUMONITOR_SOURCE=${{ env.HAMI_VGPUMONITOR_SOURCE }}
+          HAMI_VGPUMONITOR_REPO=${{ env.HAMI_VGPUMONITOR_REPO }}
           HAMI_VGPUMONITOR_REF=${{ env.HAMI_VGPUMONITOR_REF }}
           HAMI_VGPUMONITOR_IMAGE=${{ env.HAMI_VGPUMONITOR_IMAGE }}
 

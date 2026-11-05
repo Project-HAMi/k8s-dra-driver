@@ -34,6 +34,7 @@ HAMI_CORE_BUILD_IMAGE=nvidia/cuda:12.3.2-devel-ubuntu20.04
 # Pin REF to a commit for reproducible builds. Switch SOURCE to image when using
 # a verified release image containing /k8s-vgpu/bin/vGPUmonitor (v2.11.0 planned).
 HAMI_VGPUMONITOR_SOURCE ?= source
+HAMI_VGPUMONITOR_REPO ?= https://github.com/Project-HAMi/HAMi.git
 HAMI_VGPUMONITOR_REF ?= master
 HAMI_VGPUMONITOR_IMAGE ?= scratch
 

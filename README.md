@@ -113,6 +113,20 @@ make image
 make image HAMI_VGPUMONITOR_REF=<HAMi-commit-SHA>
 ```
 
+To build a development version from your HAMi fork, select its Git URL and ref:
+
+```bash
+make image HAMI_VGPUMONITOR_SOURCE=source \
+  HAMI_VGPUMONITOR_REPO=https://github.com/<owner>/HAMi.git \
+  HAMI_VGPUMONITOR_REF=<branch-or-commit-SHA>
+```
+
+`HAMI_VGPUMONITOR_REPO` defaults to `https://github.com/Project-HAMi/HAMi.git`.
+The ref must exist in the selected repository and be accessible to the builder;
+uncommitted changes in a local checkout are not included. The repository must
+retain HAMi's module layout, including `cmd/vGPUmonitor`. The repository and ref
+options apply only in source mode.
+
 The monitor uses the target architecture's CGO cross-compiler and Go's automatic
 toolchain selection to honor upstream's `go.mod`. Its source revision is logged
 during the build and embedded in `vGPUmonitor version`. A moving branch is not
@@ -131,9 +145,10 @@ Image mode requires a compatible image containing `/k8s-vgpu/bin/vGPUmonitor`
 for every requested platform. HAMi v2.9.0 is not supported. Prefer a verified
 image digest for reproducibility.
 
-Both GitHub publishing workflows accept `monitor_source`, `monitor_ref` and
+Both GitHub publishing workflows accept `monitor_source`, `monitor_repo`, `monitor_ref` and
 `monitor_image` dispatch inputs, with corresponding repository-variable fallbacks
-`HAMI_VGPUMONITOR_SOURCE`, `HAMI_VGPUMONITOR_REF` and `HAMI_VGPUMONITOR_IMAGE`.
+`HAMI_VGPUMONITOR_SOURCE`, `HAMI_VGPUMONITOR_REPO`, `HAMI_VGPUMONITOR_REF` and
+`HAMI_VGPUMONITOR_IMAGE`.
 Defaults are source mode and `master`; image mode must specify the image. This
 allows the same future release-image switch without editing workflow code.
 PR CI also builds the selected monitor packaging stage for amd64 and arm64

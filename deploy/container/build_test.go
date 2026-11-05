@@ -35,11 +35,25 @@ func TestMonitorImageValidation(t *testing.T) {
 	}
 	for _, args := range [][]string{
 		{"HAMI_VGPUMONITOR_SOURCE=source", "HAMI_VGPUMONITOR_REF="},
+		{"HAMI_VGPUMONITOR_SOURCE=source", "HAMI_VGPUMONITOR_REPO="},
+		{"HAMI_VGPUMONITOR_SOURCE=source", "HAMI_VGPUMONITOR_REPO=   "},
 		{"HAMI_VGPUMONITOR_SOURCE=invalid"},
 	} {
 		args = append([]string{"-f", "deploy/container/Makefile", "validate-monitor-image"}, args...)
 		if output, err := makeCommand(args...).CombinedOutput(); err == nil {
 			t.Fatalf("invalid configuration accepted: %v: %s", args, output)
+		}
+	}
+}
+
+func TestMonitorSourceRepository(t *testing.T) {
+	for _, args := range [][]string{
+		{"HAMI_VGPUMONITOR_SOURCE=source", "HAMI_VGPUMONITOR_REPO=https://github.com/example/HAMi.git", "HAMI_VGPUMONITOR_REF=monitor-dev"},
+		{"HAMI_VGPUMONITOR_SOURCE=image", "HAMI_VGPUMONITOR_REPO=", "HAMI_VGPUMONITOR_REF=", "HAMI_VGPUMONITOR_IMAGE=example.com/hami:verified"},
+	} {
+		args = append([]string{"-f", "deploy/container/Makefile", "build", "DOCKER=true"}, args...)
+		if output, err := makeCommand(args...).CombinedOutput(); err != nil {
+			t.Fatalf("valid repository configuration rejected: %v: %s", err, output)
 		}
 	}
 }
@@ -61,6 +75,14 @@ func TestMonitorImageMakePropagation(t *testing.T) {
 		if !strings.Contains(string(output), `--build-arg HAMI_VGPUMONITOR_SOURCE="source"`) || !strings.Contains(string(output), `--build-arg HAMI_VGPUMONITOR_REF="master"`) {
 			t.Fatalf("development source defaults not forwarded: %s", output)
 		}
+		if !strings.Contains(string(output), `--build-arg HAMI_VGPUMONITOR_REPO="https://github.com/Project-HAMi/HAMi.git"`) {
+			t.Fatalf("default source repository not forwarded: %s", output)
+		}
+		customArgs := append(append([]string{}, args...), "HAMI_VGPUMONITOR_REPO=https://github.com/example/HAMi.git", "HAMI_VGPUMONITOR_REF=monitor-dev")
+		output, err = makeCommand(customArgs...).CombinedOutput()
+		if err != nil || !strings.Contains(string(output), `--build-arg HAMI_VGPUMONITOR_REPO="https://github.com/example/HAMi.git"`) || !strings.Contains(string(output), `--build-arg HAMI_VGPUMONITOR_REF="monitor-dev"`) {
+			t.Fatalf("custom source repository/ref not forwarded for %v: %v: %s", args, err, output)
+		}
 	}
 	output, err := makeCommand("-n", "image", "HAMI_VGPUMONITOR_SOURCE=image", "HAMI_VGPUMONITOR_IMAGE=example.com/hami:release").CombinedOutput()
 	if err != nil || !strings.Contains(string(output), `--build-arg HAMI_VGPUMONITOR_SOURCE="image"`) || !strings.Contains(string(output), `--build-arg HAMI_VGPUMONITOR_IMAGE="example.com/hami:release"`) {
@@ -68,8 +90,8 @@ func TestMonitorImageMakePropagation(t *testing.T) {
 	}
 }
 
-func TestPublishingWorkflowsForwardMonitorImage(t *testing.T) {
-	for _, name := range []string{"image.yml", "release-image.yml"} {
+func TestWorkflowsForwardMonitorArguments(t *testing.T) {
+	for _, name := range []string{"image.yml", "release-image.yml", "ci.yml"} {
 		t.Run(name, func(t *testing.T) {
 			data, err := os.ReadFile(filepath.Join("../..", ".github/workflows", name))
 			if err != nil {
@@ -89,7 +111,27 @@ func TestPublishingWorkflowsForwardMonitorImage(t *testing.T) {
 			if err := yaml.Unmarshal(data, &workflow); err != nil {
 				t.Fatal(err)
 			}
-			job := workflow.Jobs["image"]
+			jobName := "image"
+			if name == "ci.yml" {
+				jobName = "monitor-build"
+			}
+			job := workflow.Jobs[jobName]
+			repoExpression := "${{ inputs.monitor_repo || vars.HAMI_VGPUMONITOR_REPO || 'https://github.com/Project-HAMi/HAMi.git' }}"
+			if name == "ci.yml" {
+				repoExpression = "${{ vars.HAMI_VGPUMONITOR_REPO || 'https://github.com/Project-HAMi/HAMi.git' }}"
+				if job.Env["HAMI_VGPUMONITOR_REPO"] != repoExpression {
+					t.Fatal("CI monitor repository must come from the repository variable or upstream default")
+				}
+				for _, step := range job.Steps {
+					if strings.HasPrefix(step.Uses, "docker/build-push-action@") && strings.Contains(step.With["build-args"], "HAMI_VGPUMONITOR_REPO=${{ env.HAMI_VGPUMONITOR_REPO }}") {
+						return
+					}
+				}
+				t.Fatal("CI monitor repository not forwarded")
+			}
+			if job.Env["HAMI_VGPUMONITOR_REPO"] != repoExpression {
+				t.Fatal("monitor repository must come from dispatch input, repository variable or upstream default")
+			}
 			if job.Env["HAMI_VGPUMONITOR_IMAGE"] != "${{ inputs.monitor_image || vars.HAMI_VGPUMONITOR_IMAGE || 'scratch' }}" {
 				t.Fatal("monitor image must come from dispatch input or repository variable")
 			}
@@ -100,13 +142,13 @@ func TestPublishingWorkflowsForwardMonitorImage(t *testing.T) {
 			for _, step := range job.Steps {
 				if step.ID == "args" {
 					loaded = strings.Contains(step.Run, "validate-monitor-image") && strings.Contains(step.Run, "hami_vgpumonitor_image=$(make print-HAMI_VGPUMONITOR_IMAGE)")
-					for _, argument := range []string{"source", "ref"} {
+					for _, argument := range []string{"source", "repo", "ref"} {
 						loaded = loaded && strings.Contains(step.Run, "hami_vgpumonitor_"+argument+"=$(make print-HAMI_VGPUMONITOR_"+strings.ToUpper(argument)+")")
 					}
 				}
 				if strings.HasPrefix(step.Uses, "docker/build-push-action@") {
 					forwarded = strings.Contains(step.With["build-args"], "HAMI_VGPUMONITOR_IMAGE=${{ steps.args.outputs.hami_vgpumonitor_image }}")
-					for _, argument := range []string{"source", "ref"} {
+					for _, argument := range []string{"source", "repo", "ref"} {
 						forwarded = forwarded && strings.Contains(step.With["build-args"], "HAMI_VGPUMONITOR_"+strings.ToUpper(argument)+"=${{ steps.args.outputs.hami_vgpumonitor_"+argument+" }}")
 					}
 				}
