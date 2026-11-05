@@ -1,0 +1,46 @@
+apiVersion: resource.k8s.io/v1
+kind: ResourceClaim
+metadata:
+  name: two-gpus
+  labels:
+    env: batssuite
+spec:
+  devices:
+    requests:
+    - name: gpu-small
+      exactly:
+        deviceClassName: hami-core-gpu.project-hami.io
+        capacity:
+          requests:
+            cores: 30
+            memory: 4Gi
+    - name: gpu-large
+      exactly:
+        deviceClassName: hami-core-gpu.project-hami.io
+        capacity:
+          requests:
+            cores: 60
+            memory: 8Gi
+    # A device can be allocated more than once, so without this both requests
+    # may land on the same GPU.
+    constraints:
+    - distinctAttribute: hami-core-gpu.project-hami.io/uuid
+---
+apiVersion: v1
+kind: Pod
+metadata:
+  name: pod-two-gpus
+  labels:
+    env: batssuite
+spec:
+  containers:
+  - name: ctr
+    image: ubuntu:24.04
+    command: ["bash", "-c"]
+    args: ["trap 'exit 0' TERM; sleep 9999 & wait"]
+    resources:
+      claims:
+      - name: gpus
+  resourceClaims:
+  - name: gpus
+    resourceClaimName: two-gpus

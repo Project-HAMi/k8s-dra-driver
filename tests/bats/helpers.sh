@@ -55,6 +55,11 @@ iupgrade_wait() {
         --set nvidiaDriverRoot="${TEST_NVIDIA_DRIVER_ROOT}" \
         --wait --timeout 5m "${args[@]}" "$@"
     # Helm 3 does not wait for a DaemonSet whose maxUnavailable covers every pod.
+    wait_for_kubelet_plugin
+}
+
+# Wait for the kubelet plugin rollout and for its devices to be published.
+wait_for_kubelet_plugin() {
     kubectl rollout status -n "${DRIVER_NAMESPACE}" daemonset/hami-dra-driver-kubelet-plugin --timeout=5m
     # The DaemonSet is ready before the plugin publishes its first
     # ResourceSlice, so wait for the devices too.
@@ -65,16 +70,43 @@ iupgrade_wait() {
     done
 }
 
+node_exec() {
+    docker exec "${KIND_CLUSTER_NAME}-control-plane" "$@"
+}
+
 # Mokka's nvidia-smi on the kind node. Its output is the ground truth that the
 # driver's view is compared against.
 node_nvidia_smi() {
-    docker exec "${KIND_CLUSTER_NAME}-control-plane" "${TEST_NVIDIA_DRIVER_ROOT}/usr/bin/nvidia-smi" "$@"
+    node_exec "${TEST_NVIDIA_DRIVER_ROOT}/usr/bin/nvidia-smi" "$@"
 }
 
 # The devices this driver publishes, one JSON object per line.
 hami_devices() {
     kubectl get resourceslices -o json |
         jq -c --arg driver "${DRIVER_NAME}" '.items[] | select(.spec.driver == $driver) | .spec.devices[]?'
+}
+
+# claim_gpu_uuids CLAIM
+#
+# The UUIDs of the GPUs allocated to CLAIM, one per line.
+claim_gpu_uuids() {
+    local devices
+    devices=$(kubectl get resourceclaim "$1" -o json |
+        jq -c --arg driver "${DRIVER_NAME}" '[.status.allocation.devices.results[] | select(.driver == $driver) | .device]')
+    hami_devices | jq -r --argjson names "${devices}" 'select(.name as $n | $names | index($n)) | .attributes.uuid.string'
+}
+
+# node_claim_state CLAIM_UID POD_UID
+#
+# The state the driver keeps on the node for a claim prepared for a pod, one
+# path per line: the pod's HAMi-Core cache directories, the claim's CDI spec,
+# and the checkpoint while it records the claim. Paths are the chart defaults.
+node_claim_state() {
+    # shellcheck disable=SC2016 # expanded by the node's shell
+    node_exec sh -c '
+        ls -d /usr/local/vgpu/containers/"$2"_* /var/run/cdi/*"$1"* 2>/dev/null
+        grep -l "$1" "/var/lib/kubelet/plugins/$3/checkpoint.json"
+    ' sh "$1" "$2" "${DRIVER_NAME}" || true
 }
 
 show_debug_info() {
