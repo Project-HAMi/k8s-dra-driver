@@ -164,7 +164,7 @@ This section defines the architectural agents within the project for SDD.
 *   **Constraints:** Used exclusively within the `DynamicMIG` feature gate code paths.
 
 ### 9. HAMi Core Monitor (Metrics & QoS Agent)
-**Source:** upstream HAMi `master` (`HAMI_VGPUMONITOR_SOURCE=source`, configurable `HAMI_VGPUMONITOR_REF`); optional release-image extraction via `HAMI_VGPUMONITOR_SOURCE=image` and `HAMI_VGPUMONITOR_IMAGE`.
+**Source:** GitHub workflows default to extracting vGPUMonitor from HAMi v2.11.0, pinned by its multi-platform image digest (`HAMI_VGPUMONITOR_SOURCE=image` and `HAMI_VGPUMONITOR_IMAGE`). Local builds default to upstream HAMi `master` (`HAMI_VGPUMONITOR_SOURCE=source`, configurable `HAMI_VGPUMONITOR_REPO` and `HAMI_VGPUMONITOR_REF` for fork development). Workflows retain explicit source-mode overrides.
 *   **Role:** Exports Prometheus GPU metrics and performs soft-QoS feedback for HAMi-Core virtualized workloads.
 *   **Responsibilities:**
     *   Scans `<hostHookPath>/vgpu/containers/<podUID>_<containerName>/` for `.cache` files created by `libvgpu.so`.
@@ -248,15 +248,16 @@ The project produces a single distroless-based container image that bundles all 
     2.  `build`: Uses `nvcr.io/nvidia/base/ubuntu:jammy-20251013` to compile the `hami-kubelet-plugin` Go binary via `make cmds`. Supports cross-compilation for `amd64`/`arm64`.
     3.  `bash`: Pulls a pre-built static `bash` binary from `ghcr.io/nvidia/k8s-dra-driver-gpu:v25.12.0-dev-839e966a` (avoids slow/fragile cross-compiled bash builds).
     4.  `toolkit`: Extracts `nvidia-cdi-hook` from `${TOOLKIT_CONTAINER_IMAGE}`.
-    5.  `vgpumonitor-source` / `vgpumonitor-image`: Builds HAMi's monitor from the selected Git ref with target-architecture CGO, or extracts it from a verified release image. The `vgpumonitor` stage selects the configured mode; source mode defaults to upstream `master`.
-    6.  `final` (distroless): Assembles artifacts from all selected stages and smoke-tests executable versions.
+    5.  `vgpumonitor-source` / `vgpumonitor-image`: Builds HAMi's monitor from the selected Git repository and ref with target-architecture CGO, or extracts it from a verified release image. The driver and monitor source builds share a `go-toolchain` stage; monitor compilation does not depend on driver source. The `vgpumonitor` stage selects the configured mode; source mode defaults to upstream `master`.
+    6.  `vgpumonitor-smoke` (distroless): Copies the selected monitor binary and runs `vGPUmonitor version` independently of driver/HAMi-Core compilation. PR CI builds this target for amd64 and arm64, with QEMU for arm64 execution.
+    7.  `final`: Inherits the smoke stage and its verified monitor binary, assembles the remaining artifacts, and smoke-tests the driver and bash versions.
 
 ### 3. Key Artifacts in Image
 
 | Path in Image | Source Stage | Purpose |
 |---|---|---|
 | `/usr/bin/hami-kubelet-plugin` | `build` | Main Driver Agent binary. |
-| `/usr/bin/vGPUmonitor` | HAMi source build (default) or verified release image | GPU monitor and Prometheus metrics exporter for HAMi-Core. |
+| `/usr/bin/vGPUmonitor` | HAMi source build (local default) or verified release image (CI default) | GPU monitor and Prometheus metrics exporter for HAMi-Core. |
 | `/usr/local/lib/hami/libvgpu.so` | `hami-core-build` | Enforcement library injected into containers. |
 | `/usr/local/lib/hami/ld.so.preload` | `hami-core-build` | Preload config that activates `libvgpu.so` in containers. |
 | `/usr/bin/vgpu-init.sh` | `hami-core-build` | Node-level initialization script for vGPU. |
@@ -311,9 +312,11 @@ make -f deploy/container/Makefile build BUILD_MULTI_ARCH_IMAGES=true PUSH_ON_BUI
 | `GOLANG_VERSION` | `hack/golang-version.sh` | Go compiler version. |
 | `TOOLKIT_CONTAINER_IMAGE` | `hack/toolkit-container-image.sh` | Source image for `nvidia-cdi-hook`. |
 | `HAMI_CORE_BUILD_IMAGE` | `versions.mk` | CUDA image used to compile `libvgpu.so`. |
-| `HAMI_VGPUMONITOR_SOURCE` | `versions.mk` | `source` (default) or `image`; selects monitor packaging mode. |
+| `HAMI_VGPUMONITOR_SOURCE` | `versions.mk` / workflow env | `source` (local default) or `image` (GitHub workflow default); selects monitor packaging mode. |
+| `HAMI_VGPUMONITOR_REPO` | `versions.mk` | HAMi Git repository URL; defaults to `https://github.com/Project-HAMi/HAMi.git`. Source mode can select a fork. |
 | `HAMI_VGPUMONITOR_REF` | `versions.mk` | HAMi source branch/tag/commit; defaults to upstream `master`. |
-| `HAMI_VGPUMONITOR_IMAGE` | `versions.mk` | Source image in image mode; planned switch to verified v2.11.0 after release. |
+| `HAMI_VGPUMONITOR_IMAGE` | `versions.mk` / workflow env | Source image in image mode; workflows default to HAMi v2.11.0 pinned by multi-platform index digest. |
+| `HAMI_VGPUMONITOR_RELEASE_IMAGE` | `versions.mk` | Shared, digest-pinned release-image default read by all GitHub workflow argument-loading steps. |
 | `VERSION` | `versions.mk` | Embedded in the binary at link time. |
 | `GIT_COMMIT` | `git describe` | Embedded in the binary at link time. |
 

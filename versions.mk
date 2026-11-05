@@ -30,12 +30,16 @@ vVERSION := v$(VERSION:v%=%)
 # The image to build hami-core lib
 HAMI_CORE_BUILD_IMAGE=nvidia/cuda:12.3.2-devel-ubuntu20.04
 
-# Build the monitor from HAMi's development branch (upstream calls it master).
-# Pin REF to a commit for reproducible builds. Switch SOURCE to image when using
-# a verified release image containing /k8s-vgpu/bin/vGPUmonitor (v2.11.0 planned).
+# Local builds default to HAMi's development branch (master). Pin REF to a
+# commit for reproducible source builds. GitHub workflows override these values
+# to extract the monitor from a pinned HAMi v2.11.0 image by default.
 HAMI_VGPUMONITOR_SOURCE ?= source
+HAMI_VGPUMONITOR_REPO ?= https://github.com/Project-HAMi/HAMi.git
 HAMI_VGPUMONITOR_REF ?= master
 HAMI_VGPUMONITOR_IMAGE ?= scratch
+# Shared release-image default for GitHub workflows; local source builds keep
+# the independent SOURCE/REPO/REF/IMAGE overrides above.
+HAMI_VGPUMONITOR_RELEASE_IMAGE := projecthami/hami:v2.11.0@sha256:caab978ed50e53163c31ed7c4650c4e6e5d8facf157f377c26e021ff5fa3e5ce
 
 GOLANG_VERSION := $(shell ./hack/golang-version.sh)
 TOOLKIT_CONTAINER_IMAGE := $(shell ./hack/toolkit-container-image.sh)
