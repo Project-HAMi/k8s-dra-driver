@@ -4,10 +4,11 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"slices"
 	"strings"
 	"testing"
 
-	"sigs.k8s.io/yaml"
+	"go.yaml.in/yaml/v3"
 )
 
 func makeCommand(args ...string) *exec.Cmd {
@@ -91,13 +92,43 @@ func TestMonitorImageMakePropagation(t *testing.T) {
 }
 
 func TestWorkflowsForwardMonitorArguments(t *testing.T) {
-	for _, name := range []string{"image.yml", "release-image.yml", "ci.yml"} {
-		t.Run(name, func(t *testing.T) {
-			data, err := os.ReadFile(filepath.Join("../..", ".github/workflows", name))
+	output, err := makeCommand("-s", "print-HAMI_VGPUMONITOR_RELEASE_IMAGE").CombinedOutput()
+	if err != nil {
+		t.Fatalf("read shared release image: %v: %s", err, output)
+	}
+	releaseImage := strings.TrimSpace(string(output))
+	if !strings.HasPrefix(releaseImage, "projecthami/hami:v2.11.0@sha256:") {
+		t.Fatalf("expected a pinned HAMi v2.11.0 release image, got %q", releaseImage)
+	}
+	defaults := map[string]string{
+		"source": "image",
+		"repo":   "https://github.com/Project-HAMi/HAMi.git",
+		"ref":    "master",
+		"image":  "", // Resolved from versions.mk by the argument-loading step.
+	}
+	for _, tc := range []struct {
+		file     string
+		job      string
+		dispatch bool
+	}{
+		{"image.yml", "image", true},
+		{"release-image.yml", "image", true},
+		{"ci.yml", "monitor-build", false},
+	} {
+		t.Run(tc.file, func(t *testing.T) {
+			data, err := os.ReadFile(filepath.Join("../..", ".github/workflows", tc.file))
 			if err != nil {
 				t.Fatal(err)
 			}
 			var workflow struct {
+				On struct {
+					WorkflowDispatch struct {
+						Inputs map[string]struct {
+							Default string
+							Options []string
+						}
+					} `yaml:"workflow_dispatch"`
+				}
 				Jobs map[string]struct {
 					Env   map[string]string
 					Steps []struct {
@@ -111,50 +142,120 @@ func TestWorkflowsForwardMonitorArguments(t *testing.T) {
 			if err := yaml.Unmarshal(data, &workflow); err != nil {
 				t.Fatal(err)
 			}
-			jobName := "image"
-			if name == "ci.yml" {
-				jobName = "monitor-build"
-			}
-			job := workflow.Jobs[jobName]
-			repoExpression := "${{ inputs.monitor_repo || vars.HAMI_VGPUMONITOR_REPO || 'https://github.com/Project-HAMi/HAMi.git' }}"
-			if name == "ci.yml" {
-				repoExpression = "${{ vars.HAMI_VGPUMONITOR_REPO || 'https://github.com/Project-HAMi/HAMi.git' }}"
-				if job.Env["HAMI_VGPUMONITOR_REPO"] != repoExpression {
-					t.Fatal("CI monitor repository must come from the repository variable or upstream default")
+			inputPrefix := ""
+			if tc.dispatch {
+				inputPrefix = "inputs.monitor_"
+				input := workflow.On.WorkflowDispatch.Inputs["monitor_source"]
+				if input.Default != "image" || !slices.Contains(input.Options, "image") || !slices.Contains(input.Options, "source") {
+					t.Fatal("manual dispatch must default to image and retain the source option")
 				}
-				for _, step := range job.Steps {
-					if strings.HasPrefix(step.Uses, "docker/build-push-action@") && strings.Contains(step.With["build-args"], "HAMI_VGPUMONITOR_REPO=${{ env.HAMI_VGPUMONITOR_REPO }}") {
-						return
-					}
+			}
+			job := workflow.Jobs[tc.job]
+			for argument, fallback := range defaults {
+				variable := "HAMI_VGPUMONITOR_" + strings.ToUpper(argument)
+				expression := "${{ "
+				if inputPrefix != "" {
+					expression += inputPrefix + argument + " || "
 				}
-				t.Fatal("CI monitor repository not forwarded")
+				expression += "vars." + variable
+				if fallback != "" {
+					expression += " || '" + fallback + "'"
+				}
+				expression += " }}"
+				if job.Env[variable] != expression {
+					t.Fatalf("%s override/default expression: got %s, want %s", variable, job.Env[variable], expression)
+				}
 			}
-			if job.Env["HAMI_VGPUMONITOR_REPO"] != repoExpression {
-				t.Fatal("monitor repository must come from dispatch input, repository variable or upstream default")
-			}
-			if job.Env["HAMI_VGPUMONITOR_IMAGE"] != "${{ inputs.monitor_image || vars.HAMI_VGPUMONITOR_IMAGE || 'scratch' }}" {
-				t.Fatal("monitor image must come from dispatch input or repository variable")
-			}
-			if job.Env["HAMI_VGPUMONITOR_SOURCE"] != "${{ inputs.monitor_source || vars.HAMI_VGPUMONITOR_SOURCE || 'source' }}" || job.Env["HAMI_VGPUMONITOR_REF"] != "${{ inputs.monitor_ref || vars.HAMI_VGPUMONITOR_REF || 'master' }}" {
-				t.Fatal("workflow must default to the HAMi development branch")
-			}
-			var loaded, forwarded bool
+			var argumentScript string
+			var forwarded, qemu bool
 			for _, step := range job.Steps {
 				if step.ID == "args" {
-					loaded = strings.Contains(step.Run, "validate-monitor-image") && strings.Contains(step.Run, "hami_vgpumonitor_image=$(make print-HAMI_VGPUMONITOR_IMAGE)")
-					for _, argument := range []string{"source", "repo", "ref"} {
-						loaded = loaded && strings.Contains(step.Run, "hami_vgpumonitor_"+argument+"=$(make print-HAMI_VGPUMONITOR_"+strings.ToUpper(argument)+")")
-					}
+					argumentScript = step.Run
+				}
+				if strings.HasPrefix(step.Uses, "docker/setup-qemu-action@") {
+					qemu = slices.Contains(strings.Split(step.With["platforms"], ","), "arm64")
 				}
 				if strings.HasPrefix(step.Uses, "docker/build-push-action@") {
-					forwarded = strings.Contains(step.With["build-args"], "HAMI_VGPUMONITOR_IMAGE=${{ steps.args.outputs.hami_vgpumonitor_image }}")
-					for _, argument := range []string{"source", "repo", "ref"} {
-						forwarded = forwarded && strings.Contains(step.With["build-args"], "HAMI_VGPUMONITOR_"+strings.ToUpper(argument)+"=${{ steps.args.outputs.hami_vgpumonitor_"+argument+" }}")
+					forwarded = true
+					for argument := range defaults {
+						variable := "HAMI_VGPUMONITOR_" + strings.ToUpper(argument)
+						value := "${{ steps.args.outputs.hami_vgpumonitor_" + argument + " }}"
+						forwarded = forwarded && strings.Contains(step.With["build-args"], variable+"="+value)
+					}
+					if !tc.dispatch && (step.With["target"] != "vgpumonitor-smoke" || step.With["platforms"] != "linux/amd64,linux/arm64") {
+						t.Fatal("PR CI must run the monitor smoke stage for both architectures")
 					}
 				}
 			}
-			if !loaded || !forwarded {
-				t.Fatalf("monitor build-argument chain incomplete: loaded=%t forwarded=%t", loaded, forwarded)
+			if argumentScript == "" || !forwarded {
+				t.Fatal("monitor argument loading/forwarding is incomplete")
+			}
+			if !tc.dispatch && !qemu {
+				t.Fatal("PR CI needs arm64 emulation for the monitor version command")
+			}
+			testMonitorArgumentLoading(t, argumentScript, releaseImage)
+		})
+	}
+}
+
+func testMonitorArgumentLoading(t *testing.T, script, releaseImage string) {
+	t.Helper()
+	for _, tc := range []struct {
+		name   string
+		source string
+		image  string
+	}{
+		{"default-image", "image", ""},
+		{"custom-image", "image", "example.com/hami:verified"},
+		{"custom-source", "source", ""},
+		{"invalid-image", "image", "scratch"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			outputPath := filepath.Join(t.TempDir(), "outputs")
+			cmd := exec.Command("bash", "-e", "-o", "pipefail", "-c", script)
+			cmd.Dir = "../.."
+			cmd.Env = append(os.Environ(),
+				"GITHUB_OUTPUT="+outputPath,
+				"RELEASE_TAG=monitor-test",
+				"HAMI_VGPUMONITOR_SOURCE="+tc.source,
+				"HAMI_VGPUMONITOR_IMAGE="+tc.image,
+				"HAMI_VGPUMONITOR_REPO=https://github.com/example/HAMi.git",
+				"HAMI_VGPUMONITOR_REF=monitor-dev",
+			)
+			output, err := cmd.CombinedOutput()
+			if tc.name == "invalid-image" {
+				if err == nil || !strings.Contains(string(output), "unsupported") {
+					t.Fatalf("invalid monitor image accepted: %v: %s", err, output)
+				}
+				return
+			}
+			if err != nil {
+				t.Fatalf("load monitor arguments: %v: %s", err, output)
+			}
+			data, err := os.ReadFile(outputPath)
+			if err != nil {
+				t.Fatal(err)
+			}
+			values := map[string]string{}
+			for _, line := range strings.Split(string(data), "\n") {
+				key, value, ok := strings.Cut(line, "=")
+				if ok {
+					values[key] = value
+				}
+			}
+			image := tc.image
+			if image == "" {
+				image = releaseImage
+			}
+			for key, want := range map[string]string{
+				"source": tc.source,
+				"image":  image,
+				"repo":   "https://github.com/example/HAMi.git",
+				"ref":    "monitor-dev",
+			} {
+				if got := values["hami_vgpumonitor_"+key]; got != want {
+					t.Errorf("monitor %s: got %q, want %q", key, got, want)
+				}
 			}
 		})
 	}

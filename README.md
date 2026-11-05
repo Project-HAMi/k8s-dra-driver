@@ -131,10 +131,12 @@ The monitor uses the target architecture's CGO cross-compiler and Go's automatic
 toolchain selection to honor upstream's `go.mod`. Its source revision is logged
 during the build and embedded in `vGPUmonitor version`. A moving branch is not
 a reproducible dependency; pin its commit when recording test/release artifacts.
-The final image executes `vGPUmonitor version` as a packaging smoke test; this
-does not replace GPU-runtime integration testing.
+The independent `vgpumonitor-smoke` stage copies the selected binary into the
+distroless runtime and executes `vGPUmonitor version`. The final image inherits
+this stage and its verified binary. This does not replace GPU-runtime integration
+testing.
 
-After HAMi v2.11.0 is released and verified, switch to copying its monitor binary:
+To copy the monitor binary from HAMi v2.11.0 instead of compiling it:
 
 ```bash
 make image HAMI_VGPUMONITOR_SOURCE=image \
@@ -145,14 +147,23 @@ Image mode requires a compatible image containing `/k8s-vgpu/bin/vGPUmonitor`
 for every requested platform. HAMi v2.9.0 is not supported. Prefer a verified
 image digest for reproducibility.
 
-Both GitHub publishing workflows accept `monitor_source`, `monitor_repo`, `monitor_ref` and
-`monitor_image` dispatch inputs, with corresponding repository-variable fallbacks
+Both GitHub publishing workflows accept `monitor_source`, `monitor_repo`,
+`monitor_ref` and `monitor_image` dispatch inputs, with corresponding repository-variable fallbacks
 `HAMI_VGPUMONITOR_SOURCE`, `HAMI_VGPUMONITOR_REPO`, `HAMI_VGPUMONITOR_REF` and
 `HAMI_VGPUMONITOR_IMAGE`.
-Defaults are source mode and `master`; image mode must specify the image. This
-allows the same future release-image switch without editing workflow code.
-PR CI also builds the selected monitor packaging stage for amd64 and arm64
-without publishing it, and installs Helm before running the chart tests.
+All three GitHub workflows default to image mode. Their shared release-image
+default is `HAMI_VGPUMONITOR_RELEASE_IMAGE` in `versions.mk`, which pins HAMi
+v2.11.0's multi-platform image index for amd64 and arm64. The argument-loading
+steps use this value when no image override is supplied.
+Dispatch inputs override repository variables; repository variables override the
+workflow fallbacks. Manual dispatch defaults `monitor_source` to `image`; select
+`source` explicitly to compile a development version with `monitor_repo` and
+`monitor_ref`. The source ref still defaults to `master`.
+Local `make image` continues to default to source mode.
+PR CI builds `vgpumonitor-smoke` for amd64 and arm64 without publishing it, using
+QEMU to execute the arm64 binary's version command. This checks binary extraction
+and runtime compatibility without building the driver or HAMi-Core. It also
+installs Helm before running the chart tests.
 
 ## Contributing
 

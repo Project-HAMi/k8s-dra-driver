@@ -141,9 +141,15 @@ RUN arch="${TARGETARCH:-$(uname -m | sed -e 's,aarch64,arm64,' -e 's,x86_64,amd6
     go build -trimpath -ldflags "-s -w -X github.com/Project-HAMi/HAMi/pkg/version.revision=${revision}" \
         -o /k8s-vgpu/bin/vGPUmonitor ./cmd/vGPUmonitor
 
-# Future release-image extraction avoids compiling the upstream source.
+# Release-image extraction avoids compiling the upstream source.
 FROM ${HAMI_VGPUMONITOR_IMAGE} AS vgpumonitor-image
 FROM vgpumonitor-${HAMI_VGPUMONITOR_SOURCE} AS vgpumonitor
+
+# Verify monitor packaging independently of the driver and HAMi-Core builds.
+# The final image inherits this stage, including the verified monitor binary.
+FROM nvcr.io/nvidia/distroless/cc:v4.0.1-dev AS vgpumonitor-smoke
+COPY --from=vgpumonitor /k8s-vgpu/bin/vGPUmonitor /usr/bin/vGPUmonitor
+RUN ["/usr/bin/vGPUmonitor", "version"]
 
 # Build static bash binary (against musl). Notes: cross-compilation isn't robust
 # (see non-deterministic segfaults tracked in issues/502; source code download
@@ -165,7 +171,7 @@ FROM ghcr.io/nvidia/k8s-dra-driver-gpu:v25.12.0-dev-839e966a AS bash
 
 FROM ${TOOLKIT_CONTAINER_IMAGE} AS toolkit
 
-FROM nvcr.io/nvidia/distroless/cc:v4.0.1-dev
+FROM vgpumonitor-smoke
 
 ENV NVIDIA_DISABLE_REQUIRE="true"
 ENV NVIDIA_VISIBLE_DEVICES=all
@@ -197,7 +203,6 @@ COPY --from=build   /build/scripts/unbind_from_driver.sh     /usr/bin/unbind_fro
 COPY /hack/kubelet-plugin-prestart.sh /usr/bin/kubelet-plugin-prestart.sh
 
 COPY --from=build        /artifacts/hami-kubelet-plugin      /usr/bin/hami-kubelet-plugin
-COPY --from=vgpumonitor  /k8s-vgpu/bin/vGPUmonitor           /usr/bin/vGPUmonitor
 
 COPY --from=hami-core-build /k8s-dra-driver/lib/local /usr/local
 COPY --from=hami-core-build /k8s-dra-driver/lib/nvidia/vgpu-init.sh /usr/bin/vgpu-init.sh
@@ -208,7 +213,6 @@ USER root:root
 
 # Smoke-test executables (provide early build feedback).
 RUN ["/usr/bin/hami-kubelet-plugin", "--version"]
-RUN ["/usr/bin/vGPUmonitor", "version"]
 RUN ["/bin/bash", "--version"]
 
 ENTRYPOINT ["/bin/bash"]

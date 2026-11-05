@@ -26,10 +26,10 @@ jobs:
   monitor-build:
     runs-on: ubuntu-latest
     env:
-      HAMI_VGPUMONITOR_SOURCE: ${{ vars.HAMI_VGPUMONITOR_SOURCE || 'source' }}
+      HAMI_VGPUMONITOR_SOURCE: ${{ vars.HAMI_VGPUMONITOR_SOURCE || 'image' }}
       HAMI_VGPUMONITOR_REPO: ${{ vars.HAMI_VGPUMONITOR_REPO || 'https://github.com/Project-HAMi/HAMi.git' }}
       HAMI_VGPUMONITOR_REF: ${{ vars.HAMI_VGPUMONITOR_REF || 'master' }}
-      HAMI_VGPUMONITOR_IMAGE: ${{ vars.HAMI_VGPUMONITOR_IMAGE || 'scratch' }}
+      HAMI_VGPUMONITOR_IMAGE: ${{ vars.HAMI_VGPUMONITOR_IMAGE }}
     steps:
     - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
       with:
@@ -39,28 +39,41 @@ jobs:
     - name: Load monitor build arguments
       id: args
       run: |
+        export HAMI_VGPUMONITOR_IMAGE="${HAMI_VGPUMONITOR_IMAGE:-$(make -s print-HAMI_VGPUMONITOR_RELEASE_IMAGE)}"
         make -f deploy/container/Makefile validate-monitor-image
-        echo "golang_version=$(make print-GOLANG_VERSION)" >> "${GITHUB_OUTPUT}"
+        {
+          echo "golang_version=$(make -s print-GOLANG_VERSION)"
+          echo "hami_vgpumonitor_source=$(make -s print-HAMI_VGPUMONITOR_SOURCE)"
+          echo "hami_vgpumonitor_repo=$(make -s print-HAMI_VGPUMONITOR_REPO)"
+          echo "hami_vgpumonitor_ref=$(make -s print-HAMI_VGPUMONITOR_REF)"
+          echo "hami_vgpumonitor_image=$(make -s print-HAMI_VGPUMONITOR_IMAGE)"
+        } >> "${GITHUB_OUTPUT}"
+
+    - name: Set up QEMU
+      uses: docker/setup-qemu-action@c7c53464625b32c7a7e944ae62b3e17d2b600130 # v3
+      with:
+        image: tonistiigi/binfmt:qemu-v7.0.0-28
+        platforms: arm64
 
     - name: Set up Docker Buildx
       uses: docker/setup-buildx-action@8d2750c68a42422c14e847fe6c8ac0403b4cbd6f # v3
 
-    - name: Build monitor packaging stage for both architectures
+    - name: Smoke-test monitor packaging for both architectures
       uses: docker/build-push-action@10e90e3645eae34f1e60eeb005ba3a3d33f178e8 # v6
       with:
         context: .
         file: deploy/container/Dockerfile
-        target: vgpumonitor
+        target: vgpumonitor-smoke
         platforms: linux/amd64,linux/arm64
         push: false
         cache-from: type=gha,scope=monitor
         cache-to: type=gha,scope=monitor,mode=max
         build-args: |
           GOLANG_VERSION=${{ steps.args.outputs.golang_version }}
-          HAMI_VGPUMONITOR_SOURCE=${{ env.HAMI_VGPUMONITOR_SOURCE }}
-          HAMI_VGPUMONITOR_REPO=${{ env.HAMI_VGPUMONITOR_REPO }}
-          HAMI_VGPUMONITOR_REF=${{ env.HAMI_VGPUMONITOR_REF }}
-          HAMI_VGPUMONITOR_IMAGE=${{ env.HAMI_VGPUMONITOR_IMAGE }}
+          HAMI_VGPUMONITOR_SOURCE=${{ steps.args.outputs.hami_vgpumonitor_source }}
+          HAMI_VGPUMONITOR_REPO=${{ steps.args.outputs.hami_vgpumonitor_repo }}
+          HAMI_VGPUMONITOR_REF=${{ steps.args.outputs.hami_vgpumonitor_ref }}
+          HAMI_VGPUMONITOR_IMAGE=${{ steps.args.outputs.hami_vgpumonitor_image }}
 
   build:
     runs-on: ubuntu-latest
