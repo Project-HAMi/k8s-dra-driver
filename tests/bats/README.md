@@ -60,6 +60,12 @@ bats tests/bats/test_hami_basic.bats --filter "1 pod"
 |---|---|
 | one device per GPU | Each mock GPU is published once as `hami-gpu-<minor>`, with its UUID, PCI bus ID, 100 cores and its full memory |
 | 1 pod, 1 GPU | A pod claiming 30 cores and 4Gi gets its GPU and the limit env vars, and `nvidia-smi` in it shows only that GPU with 4096 MiB |
+| 1 pod, 2 GPUs | A claim for two distinct GPUs gets both, each capped at one of its two limits |
+| 2 pods share 1 GPU | Two pods that together fill GPU 0 both run on it, each capped at its own limit |
+| does not fit | With GPU 0 full, a pod claiming it stays Pending and unallocated, and starts once a pod frees its share |
+| kubelet plugin restart | A running pod keeps running, is not restarted and is still limited after the plugin restarts |
+| pod deletion | Deleting a pod with a templated claim removes its cache directory, CDI spec and checkpoint entry from the node |
+| vGPUmonitor (`test_hami_monitor.bats`) | With `monitor.enabled=true`, the metrics report each pod's memory limit on its GPU |
 
 ## Not covered by Mokka
 

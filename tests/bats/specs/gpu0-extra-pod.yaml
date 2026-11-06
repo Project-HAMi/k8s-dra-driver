@@ -1,0 +1,39 @@
+# A small pod for GPU 0, which does not fit once shared-gpu.yaml fills it.
+apiVersion: resource.k8s.io/v1
+kind: ResourceClaim
+metadata:
+  name: gpu0-extra
+  labels:
+    env: batssuite
+spec:
+  devices:
+    requests:
+    - name: gpu
+      exactly:
+        deviceClassName: hami-core-gpu.project-hami.io
+        selectors:
+        - cel:
+            expression: device.attributes["hami-core-gpu.project-hami.io"].minor == 0
+        capacity:
+          requests:
+            cores: 10
+            memory: 1Gi
+---
+apiVersion: v1
+kind: Pod
+metadata:
+  name: pod-gpu0-extra
+  labels:
+    env: batssuite
+spec:
+  containers:
+  - name: ctr
+    image: ubuntu:24.04
+    command: ["bash", "-c"]
+    args: ["trap 'exit 0' TERM; sleep 9999 & wait"]
+    resources:
+      claims:
+      - name: gpu
+  resourceClaims:
+  - name: gpu
+    resourceClaimName: gpu0-extra
