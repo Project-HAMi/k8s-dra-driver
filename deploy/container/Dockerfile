@@ -28,7 +28,23 @@ ARG BUILDPLATFORM
 FROM --platform=${BUILDPLATFORM} nvidia/cuda:12.9.1-cudnn-devel-ubuntu20.04 AS hami-core-build
 
 ENV DEBIAN_FRONTEND=noninteractive
-RUN apt-get -y update; apt-get -y --no-install-recommends install cmake git && rm -rf /var/lib/apt/lists/*
+# HAMi-Core requires CMake >= 3.18, while Ubuntu 20.04 ships 3.16.
+ARG BUILDARCH
+RUN set -eux; \
+    apt-get update; \
+    apt-get install -y --no-install-recommends ca-certificates curl git; \
+    rm -rf /var/lib/apt/lists/*; \
+    case "${BUILDARCH}" in \
+        amd64) cmake_arch=x86_64; cmake_sha=0dc2e9a6860f06bf10bd8fadc03e35d9eeb4df46e33763a7e480e987758f385c ;; \
+        arm64) cmake_arch=aarch64; cmake_sha=83f8fd91d2038a56556e1400390fcfe42f79602940c494f6c6f1cdae7f9e7f40 ;; \
+        *) echo "Unsupported CMake build architecture: ${BUILDARCH}" >&2; exit 1 ;; \
+    esac; \
+    cmake_version=3.31.12; \
+    curl -fsSL --retry 3 -o /tmp/cmake.tar.gz \
+        "https://github.com/Kitware/CMake/releases/download/v${cmake_version}/cmake-${cmake_version}-linux-${cmake_arch}.tar.gz"; \
+    echo "${cmake_sha}  /tmp/cmake.tar.gz" | sha256sum -c -; \
+    tar -xzf /tmp/cmake.tar.gz -C /usr/local --strip-components=1; \
+    rm /tmp/cmake.tar.gz
 COPY . /k8s-dra-driver
 # build.sh falls back gracefully without git. The parent .git goes too, or
 # hami-core's CMake walks up and stamps this repo's commit into libvgpu.so.
