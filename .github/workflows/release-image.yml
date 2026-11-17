@@ -110,3 +110,22 @@ jobs:
           VERSION=${{ steps.args.outputs.version }}
           GIT_COMMIT=${{ steps.args.outputs.git_commit }}
         tags: ${{ env.IMAGE_NAME }}:${{ github.event.inputs.tag }}
+
+    # Published next to the image, with the release's version, so that the
+    # chart's default image tag is that release. Chart versions are SemVer, so
+    # tags such as latest publish only the image.
+    - name: Push Helm chart
+      env:
+        RELEASE_TAG: ${{ inputs.tag }}
+        REGISTRY_USERNAME: ${{ secrets.DOCKERHUB_TOKEN }}
+        REGISTRY_PASSWORD: ${{ secrets.DOCKERHUB_PASSWD }}
+      shell: bash
+      run: |
+        if [[ ! "${RELEASE_TAG}" =~ ^v[0-9]+\.[0-9]+\.[0-9]+(-[0-9A-Za-z.-]+)?$ ]]; then
+          echo "Not a release version, skipping the chart: ${RELEASE_TAG}"
+          exit 0
+        fi
+        version="${RELEASE_TAG#v}"
+        helm package chart/hami-dra-driver --version "${version}" --app-version "${RELEASE_TAG}" --destination dist
+        helm registry login registry-1.docker.io --username "${REGISTRY_USERNAME}" --password-stdin <<<"${REGISTRY_PASSWORD}"
+        helm push "dist/hami-dra-driver-${version}.tgz" oci://registry-1.docker.io/projecthami

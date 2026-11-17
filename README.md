@@ -20,7 +20,18 @@ The list of prerequisites for running the DRA Driver for HAMi-Core is described 
 - kernel version >= 3.10
 
 
-Please check the [DaemonSet configuration](demo/yaml/ds.yaml) in the demo/yaml directory. We are working on a Helm Chart for this DRA Driver, it will be available in the near future.
+### Install with Helm
+
+Each release publishes its chart next to its image. Pick a version from the
+[releases](https://github.com/Project-HAMi/k8s-dra-driver/releases), without
+the leading `v`:
+
+```bash
+helm install hami-dra-driver oci://registry-1.docker.io/projecthami/hami-dra-driver \
+  --version <version> --namespace hami-dra-driver --create-namespace
+```
+
+The chart installs the image of its own release.
 
 ## ResourceClaim limitations
 

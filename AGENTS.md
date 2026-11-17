@@ -246,7 +246,7 @@ The project produces a single distroless-based container image that bundles all 
 
 *   **Base Image:** `nvcr.io/nvidia/distroless/cc:v4.0.1-dev` (Minimalist, secure).
 *   **Build Stages:**
-    1.  `hami-core-build`: Uses `nvidia/cuda:12.3.2-devel-ubuntu20.04` to compile `libvgpu.so` from `lib/hami-core/` via `build.sh`. Also stages `ld.so.preload` and `vgpu-init.sh`.
+    1.  `hami-core-build`: Uses `nvidia/cuda:12.9.1-cudnn-devel-ubuntu20.04` to compile `libvgpu.so` from `lib/hami-core/` via `build.sh`. Also stages `ld.so.preload` and `vgpu-init.sh`. Runs on the target platform (emulated in multi-arch builds) because `build.sh` uses the native compiler; do not pin it to `BUILDPLATFORM`.
     2.  `build`: Uses `nvcr.io/nvidia/base/ubuntu:jammy-20251013` to compile the `hami-kubelet-plugin` Go binary via `make cmds`. Supports cross-compilation for `amd64`/`arm64`.
     3.  `bash`: Pulls a pre-built static `bash` binary from `ghcr.io/nvidia/k8s-dra-driver-gpu:v25.12.0-dev-839e966a` (avoids slow/fragile cross-compiled bash builds).
     4.  `toolkit`: Extracts `nvidia-cdi-hook` from `${TOOLKIT_CONTAINER_IMAGE}`.
@@ -270,7 +270,7 @@ The project produces a single distroless-based container image that bundles all 
 | `/bin/bash` | `bash` | Statically linked bash for executing shell scripts in the distroless environment. |
 
 ### Helm Chart Deployment
-The project also provides a Helm chart under `chart/hami-dra-driver/` for cluster installation.
+The project also provides a Helm chart under `chart/hami-dra-driver/` for cluster installation. The Release Image workflow publishes it, versioned by the release tag, to `oci://registry-1.docker.io/projecthami/hami-dra-driver`.
 
 ```bash
 # Install via Helm (example)
