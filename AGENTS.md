@@ -251,8 +251,9 @@ The project produces a single distroless-based container image that bundles all 
     3.  `bash`: Pulls a pre-built static `bash` binary from `ghcr.io/nvidia/k8s-dra-driver-gpu:v25.12.0-dev-839e966a` (avoids slow/fragile cross-compiled bash builds).
     4.  `toolkit`: Extracts `nvidia-cdi-hook` from `${TOOLKIT_CONTAINER_IMAGE}`.
     5.  `vgpumonitor-source` / `vgpumonitor-image`: Builds HAMi's monitor from the selected Git repository and ref with target-architecture CGO, or extracts it from a verified release image. The driver and monitor source builds share a `go-toolchain` stage; monitor compilation does not depend on driver source. The `vgpumonitor` stage selects the configured mode; source mode defaults to upstream `master`.
-    6.  `vgpumonitor-smoke` (distroless): Copies the selected monitor binary and runs `vGPUmonitor version` independently of driver/HAMi-Core compilation. PR CI builds this target for amd64 and arm64, with QEMU for arm64 execution.
-    7.  `final`: Inherits the smoke stage and its verified monitor binary, assembles the remaining artifacts, and smoke-tests the driver and bash versions.
+    6.  `vgpumonitor-smoke` (distroless): Copies the selected monitor binary and runs `vGPUmonitor version` independently of driver/HAMi-Core compilation.
+    7.  `image`: Inherits the smoke stage and its verified monitor binary, assembles the remaining artifacts, and smoke-tests the driver and bash versions.
+    8.  `verify-arch`: Fails if any ELF file in `image` does not match `TARGETARCH` (`hack/verify-elf-arch.sh`). The default target depends on it, so every build runs the check. PR CI builds the default target for amd64 and arm64, with QEMU for arm64.
 
 ### 3. Key Artifacts in Image
 

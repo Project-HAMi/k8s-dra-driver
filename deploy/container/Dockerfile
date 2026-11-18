@@ -189,7 +189,7 @@ FROM ghcr.io/nvidia/k8s-dra-driver-gpu:v25.12.0-dev-839e966a AS bash
 
 FROM ${TOOLKIT_CONTAINER_IMAGE} AS toolkit
 
-FROM vgpumonitor-smoke
+FROM vgpumonitor-smoke AS image
 
 ENV NVIDIA_DISABLE_REQUIRE="true"
 ENV NVIDIA_VISIBLE_DEVICES=all
@@ -234,3 +234,18 @@ RUN ["/usr/bin/hami-kubelet-plugin", "--version"]
 RUN ["/bin/bash", "--version"]
 
 ENTRYPOINT ["/bin/bash"]
+
+# Every ELF file in the image must match the target architecture. The smoke
+# tests above cannot catch a mismatch: binfmt runs a foreign binary anyway, and
+# libvgpu.so is never run. Runs natively on the build platform.
+FROM --platform=${BUILDPLATFORM} nvcr.io/nvidia/base/ubuntu:jammy-20251013 AS verify-arch
+ARG TARGETARCH
+RUN --mount=type=bind,from=image,target=/rootfs \
+    --mount=type=bind,source=hack/verify-elf-arch.sh,target=/verify-elf-arch.sh \
+    bash /verify-elf-arch.sh /rootfs "${TARGETARCH}" > /verify-arch.log
+
+# The default target. The mount makes it depend on verify-arch, so no image is
+# built or pushed without the check; it adds nothing to the image.
+FROM image
+RUN --mount=type=bind,from=verify-arch,source=/verify-arch.log,target=/verify-arch.log \
+    ["/bin/bash", "-c", "cat /verify-arch.log"]

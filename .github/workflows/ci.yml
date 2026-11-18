@@ -43,6 +43,7 @@ jobs:
         make -f deploy/container/Makefile validate-monitor-image
         {
           echo "golang_version=$(make -s print-GOLANG_VERSION)"
+          echo "toolkit_container_image=$(make -s print-TOOLKIT_CONTAINER_IMAGE)"
           echo "hami_vgpumonitor_source=$(make -s print-HAMI_VGPUMONITOR_SOURCE)"
           echo "hami_vgpumonitor_repo=$(make -s print-HAMI_VGPUMONITOR_REPO)"
           echo "hami_vgpumonitor_ref=$(make -s print-HAMI_VGPUMONITOR_REF)"
@@ -58,18 +59,19 @@ jobs:
     - name: Set up Docker Buildx
       uses: docker/setup-buildx-action@8d2750c68a42422c14e847fe6c8ac0403b4cbd6f # v3
 
-    - name: Smoke-test monitor packaging for both architectures
+    # The full image, so that its verify-arch stage checks both architectures.
+    - name: Build the image for both architectures
       uses: docker/build-push-action@10e90e3645eae34f1e60eeb005ba3a3d33f178e8 # v6
       with:
         context: .
         file: deploy/container/Dockerfile
-        target: vgpumonitor-smoke
         platforms: linux/amd64,linux/arm64
         push: false
         cache-from: type=gha,scope=monitor
         cache-to: type=gha,scope=monitor,mode=max
         build-args: |
           GOLANG_VERSION=${{ steps.args.outputs.golang_version }}
+          TOOLKIT_CONTAINER_IMAGE=${{ steps.args.outputs.toolkit_container_image }}
           HAMI_VGPUMONITOR_SOURCE=${{ steps.args.outputs.hami_vgpumonitor_source }}
           HAMI_VGPUMONITOR_REPO=${{ steps.args.outputs.hami_vgpumonitor_repo }}
           HAMI_VGPUMONITOR_REF=${{ steps.args.outputs.hami_vgpumonitor_ref }}
