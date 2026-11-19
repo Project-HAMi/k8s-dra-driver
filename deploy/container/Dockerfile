@@ -47,10 +47,13 @@ RUN set -eux; \
     echo "${cmake_sha}  /tmp/cmake.tar.gz" | sha256sum -c -; \
     tar -xzf /tmp/cmake.tar.gz -C /usr/local --strip-components=1; \
     rm /tmp/cmake.tar.gz
-COPY . /k8s-dra-driver
-# build.sh falls back gracefully without git. The parent .git goes too, or
-# hami-core's CMake walks up and stamps this repo's commit into libvgpu.so.
-RUN rm -rf /k8s-dra-driver/.git /k8s-dra-driver/lib/hami-core/.git
+# Only what this stage uses, so that other changes do not rebuild HAMi-Core,
+# which is slow under emulation. Without this repo's .git, hami-core's CMake
+# cannot walk up and stamp this repo's commit into libvgpu.so.
+COPY lib/hami-core /k8s-dra-driver/lib/hami-core
+COPY lib/nvidia /k8s-dra-driver/lib/nvidia
+# build.sh falls back gracefully without git.
+RUN rm -rf /k8s-dra-driver/lib/hami-core/.git
 WORKDIR /k8s-dra-driver/lib/hami-core
 RUN bash ./build.sh
 
