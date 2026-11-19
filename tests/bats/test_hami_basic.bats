@@ -103,22 +103,26 @@ bats::on_failure() {
     uuids=$(claim_gpu_uuids two-gpus | sort -u)
     assert_equal "$(grep -c . <<<"${uuids}")" 2
 
-    # The driver numbers the limit env vars in no fixed order, so only the
-    # limits as a set are compared, not which GPU got which.
+    # Check the requested limits, then verify their association with UUIDs.
     run kubectl exec "${_podname}" -- env
     assert_success
     assert_equal "$(sed -n 's/^CUDA_DEVICE_SM_LIMIT_[0-9]*=//p' <<<"${output}" | sort -n | xargs)" "30 60"
     assert_equal "$(sed -n 's/^CUDA_DEVICE_MEMORY_LIMIT_[0-9]*=//p' <<<"${output}" | sort -n | xargs)" "4096m 8192m"
 
-    # Both allocated GPUs are visible, each capped at one of the limits.
+    # Each allocated GPU must get its own requested limit, not just one of
+    # the two limits. An unordered comparison of memory alone misses swaps.
     run --separate-stderr kubectl exec "${_podname}" -- \
         nvidia-smi --query-gpu=uuid --format=csv,noheader
     assert_success
     assert_equal "$(sort <<<"${output}")" "${uuids}"
+    local expected
+    expected=$(printf '%s, 4096\n%s, 8192\n' \
+        "$(claim_gpu_uuids two-gpus gpu-small)" \
+        "$(claim_gpu_uuids two-gpus gpu-large)" | sort)
     run --separate-stderr kubectl exec "${_podname}" -- \
-        nvidia-smi --query-gpu=memory.total --format=csv,noheader,nounits
+        nvidia-smi --query-gpu=uuid,memory.total --format=csv,noheader,nounits
     assert_success
-    assert_equal "$(sort -n <<<"${output}" | xargs)" "4096 8192"
+    assert_equal "$(sort <<<"${output}")" "${expected}"
 }
 
 

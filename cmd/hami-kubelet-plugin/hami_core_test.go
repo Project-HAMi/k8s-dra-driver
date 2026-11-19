@@ -20,6 +20,7 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"os"
 	"path/filepath"
 	"strings"
@@ -911,6 +912,57 @@ func TestGetCDIContainerEditsCachePath(t *testing.T) {
 	}
 	if _, err := os.Stat(stalePath); !os.IsNotExist(err) {
 		t.Errorf("stale cache file was not removed: %v", err)
+	}
+}
+
+func TestGetCDIContainerEditsDeviceLimitMapping(t *testing.T) {
+	for _, tc := range []struct {
+		name    string
+		indices []int
+	}{
+		{name: "two GPUs", indices: []int{0, 1}},
+		{name: "non-contiguous subset", indices: []int{2, 7}},
+		{name: "one nonzero GPU", indices: []int{7}},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			claim := testHAMiClaim(t, "limit-mapping", 25, "2816Mi")
+			claim.Status.Allocation.Devices.Results = nil
+			devices := AllocatableDevices{}
+			var wantLimits []string
+			for i, index := range tc.indices {
+				// Both minor and UUID order oppose NVML order. Pass through the
+				// same wrapper as discovery, so losing the index also fails here.
+				gpu := (deviceLib{}).wrapHAMiCoreGpu(&AllocatableDevice{Gpu: &GpuInfo{
+					UUID:        fmt.Sprintf("GPU-test-%02d", 10-i),
+					nvmlIndex:   index,
+					minor:       10 - i,
+					memoryBytes: testGPUMemory,
+				}})
+				devices[gpu.CanonicalName()] = gpu
+				memoryMiB := int64(2816 * (i + 1))
+				cores := int64(25 * (i + 1))
+				result := resourceapi.DeviceRequestAllocationResult{
+					Device: gpu.CanonicalName(),
+					ConsumedCapacity: map[resourceapi.QualifiedName]resource.Quantity{
+						"memory": *resource.NewQuantity(memoryMiB*1024*1024, resource.BinarySI),
+						"cores":  *resource.NewQuantity(cores, resource.DecimalSI),
+					},
+				}
+				// Request order must not decide which GPU gets a limit either.
+				claim.Status.Allocation.Devices.Results = append(
+					[]resourceapi.DeviceRequestAllocationResult{result}, claim.Status.Allocation.Devices.Results...)
+				wantLimits = append(wantLimits,
+					fmt.Sprintf("CUDA_DEVICE_SM_LIMIT_%d=%d", i, cores),
+					fmt.Sprintf("CUDA_DEVICE_MEMORY_LIMIT_%d=%dm", i, memoryMiB))
+			}
+			manager := newTestPrepareDeviceState(t, claim).hamiCoreManager
+			// Repeated prepare must preserve the mapping across map iterations.
+			for attempt := 0; attempt < 64; attempt++ {
+				edits, err := manager.GetCDIContainerEdits(context.Background(), claim, devices)
+				require.NoError(t, err)
+				require.Equal(t, wantLimits, edits.Env[1:], "prepare attempt %d", attempt)
+			}
+		})
 	}
 }
 
