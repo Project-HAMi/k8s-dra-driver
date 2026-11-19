@@ -244,8 +244,9 @@ RUN --mount=type=bind,from=image,target=/rootfs \
     --mount=type=bind,source=hack/verify-elf-arch.sh,target=/verify-elf-arch.sh \
     bash /verify-elf-arch.sh /rootfs "${TARGETARCH}" > /verify-arch.log
 
-# The default target. The mount makes it depend on verify-arch, so no image is
-# built or pushed without the check; it adds nothing to the image.
+# The default target. The mount makes it depend on verify-arch, so a default
+# build cannot produce or push an unchecked image; it adds nothing to the image.
+# `--target image` skips the check.
 FROM image
 RUN --mount=type=bind,from=verify-arch,source=/verify-arch.log,target=/verify-arch.log \
     ["/bin/bash", "-c", "cat /verify-arch.log"]

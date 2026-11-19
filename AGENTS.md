@@ -253,7 +253,7 @@ The project produces a single distroless-based container image that bundles all 
     5.  `vgpumonitor-source` / `vgpumonitor-image`: Builds HAMi's monitor from the selected Git repository and ref with target-architecture CGO, or extracts it from a verified release image. The driver and monitor source builds share a `go-toolchain` stage; monitor compilation does not depend on driver source. The `vgpumonitor` stage selects the configured mode; source mode defaults to upstream `master`.
     6.  `vgpumonitor-smoke` (distroless): Copies the selected monitor binary and runs `vGPUmonitor version` independently of driver/HAMi-Core compilation.
     7.  `image`: Inherits the smoke stage and its verified monitor binary, assembles the remaining artifacts, and smoke-tests the driver and bash versions.
-    8.  `verify-arch`: Fails if any ELF file in `image` does not match `TARGETARCH` (`hack/verify-elf-arch.sh`). The default target depends on it, so every build runs the check. PR CI builds the default target for amd64 and arm64, with QEMU for arm64.
+    8.  `verify-arch`: Fails if any ELF file in `image` does not match `TARGETARCH` (`hack/verify-elf-arch.sh`). The default target depends on it, so every default build runs the check; `--target image` skips it. PR CI builds the default target for amd64 and arm64, with QEMU for arm64.
 
 ### 3. Key Artifacts in Image
 

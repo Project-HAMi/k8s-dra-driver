@@ -50,10 +50,11 @@ jobs:
           echo "hami_vgpumonitor_image=$(make -s print-HAMI_VGPUMONITOR_IMAGE)"
         } >> "${GITHUB_OUTPUT}"
 
+    # HAMi-Core compiles under emulation for arm64; QEMU 7.0 segfaults building it.
     - name: Set up QEMU
       uses: docker/setup-qemu-action@c7c53464625b32c7a7e944ae62b3e17d2b600130 # v3
       with:
-        image: tonistiigi/binfmt:qemu-v7.0.0-28
+        image: tonistiigi/binfmt:qemu-v10.2.3-68
         platforms: arm64
 
     - name: Set up Docker Buildx
@@ -68,7 +69,9 @@ jobs:
         platforms: linux/amd64,linux/arm64
         push: false
         cache-from: type=gha,scope=monitor
-        cache-to: type=gha,scope=monitor,mode=max
+        # mode=max would export the CUDA build image for both architectures,
+        # which takes longer than the build and overflows the 10 GB cache.
+        cache-to: type=gha,scope=monitor,mode=min
         build-args: |
           GOLANG_VERSION=${{ steps.args.outputs.golang_version }}
           TOOLKIT_CONTAINER_IMAGE=${{ steps.args.outputs.toolkit_container_image }}

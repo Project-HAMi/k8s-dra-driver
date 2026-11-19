@@ -26,10 +26,18 @@ case "$2" in
     *) echo "unsupported architecture: $2" >&2; exit 2 ;;
 esac
 
+# List the files first: set -e cannot see a find that fails inside a process
+# substitution, and the check would pass on a partial list.
+files="$(mktemp)"
+trap 'rm -f "${files}"' EXIT
+find "${root}" -xdev -type f -print0 >"${files}"
+
 checked=0
 mismatched=0
 while IFS= read -r -d '' file; do
-    read -r -a b <<<"$(od -An -v -tu1 -N20 -- "${file}" | tr -s ' \n' ' ')"
+    # A separate assignment, so that set -e stops on a file od cannot read.
+    header="$(od -An -v -tu1 -N20 -- "${file}" | tr -s ' \n' ' ')"
+    read -r -a b <<<"${header}"
     if [[ ${#b[@]} -lt 20 || "${b[*]:0:4}" != "127 69 76 70" ]]; then
         continue
     fi
@@ -39,7 +47,7 @@ while IFS= read -r -d '' file; do
         echo "wrong architecture: ${file#"${root%/}"} has e_machine ${machine}, want ${want} ($2)" >&2
         mismatched=$((mismatched + 1))
     fi
-done < <(find "${root}" -xdev -type f -print0)
+done <"${files}"
 
 if [[ ${checked} -eq 0 ]]; then
     echo "no ELF files found under ${root}" >&2
