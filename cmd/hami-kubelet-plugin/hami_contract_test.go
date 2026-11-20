@@ -39,6 +39,7 @@ import (
 	resourceapi "k8s.io/api/resource/v1"
 	"k8s.io/apimachinery/pkg/api/resource"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
+	"k8s.io/apimachinery/pkg/runtime"
 	"k8s.io/apimachinery/pkg/types"
 	utilcache "k8s.io/apimachinery/pkg/util/cache"
 	"k8s.io/client-go/kubernetes/fake"
@@ -286,6 +287,63 @@ func TestHAMiPrepareSharesDeviceAcrossClaims(t *testing.T) {
 	edits := claimDeviceEdits(t, s, "uid-b")
 	require.Contains(t, edits.Env, "CUDA_DEVICE_SM_LIMIT_0=50")
 	require.Contains(t, edits.Env, "CUDA_DEVICE_MEMORY_LIMIT_0=2048m")
+}
+
+// An opaque config on only one request puts the claim's GPUs in different
+// config groups. The container must still get one limit per GPU, in NVML order.
+func TestHAMiPrepareNumbersGPUsAcrossConfigGroups(t *testing.T) {
+	ctx := context.Background()
+	claim := testHAMiClaim(t, "uid-a", 30, "4Gi")
+	second := claim.Status.Allocation.Devices.Results[0]
+	second.Request = "gpu-b"
+	second.Device = "hami-gpu-1"
+	second.ConsumedCapacity = map[resourceapi.QualifiedName]resource.Quantity{
+		"cores":  *resource.NewQuantity(50, resource.DecimalSI),
+		"memory": resource.MustParse("2Gi"),
+	}
+	claim.Status.Allocation.Devices.Results = append(claim.Status.Allocation.Devices.Results, second)
+	claim.Status.Allocation.Devices.Config = []resourceapi.DeviceAllocationConfiguration{{
+		Source:   resourceapi.AllocationConfigSourceClaim,
+		Requests: []string{"gpu-b"},
+		DeviceConfiguration: resourceapi.DeviceConfiguration{Opaque: &resourceapi.OpaqueDeviceConfiguration{
+			Driver:     DriverName,
+			Parameters: runtime.RawExtension{Raw: []byte(`{"apiVersion":"resource.nvidia.com/v1beta1","kind":"GpuConfig"}`)},
+		}},
+	}}
+	s := newTestPrepareDeviceState(t, claim)
+	gpu := testHAMiGpu()
+	gpu.HAMiGpu.UUID = "GPU-test-1"
+	gpu.HAMiGpu.minor = 1
+	gpu.HAMiGpu.nvmlIndex = 1
+	s.allocatable[gpu.CanonicalName()] = gpu
+	s.cdi.specCache.Set(gpu.UUID(), []cdispec.Device{{
+		ContainerEdits: cdispec.ContainerEdits{
+			DeviceNodes: []*cdispec.DeviceNode{{Path: "/dev/nvidia1"}},
+		},
+	}}, time.Hour)
+
+	_, err := s.Prepare(ctx, claim)
+	require.NoError(t, err)
+
+	spec, err := cdiapi.ReadSpec(claimSpecPath(s, "uid-a"), 0)
+	require.NoError(t, err)
+	require.Len(t, spec.Devices, 2)
+	// The container gets the env of every device in the claim.
+	var limits []string
+	for _, d := range spec.Devices {
+		for _, e := range d.ContainerEdits.Env {
+			if strings.HasPrefix(e, "CUDA_DEVICE_SM_LIMIT_") || strings.HasPrefix(e, "CUDA_DEVICE_MEMORY_LIMIT_") {
+				limits = append(limits, e)
+			}
+		}
+	}
+	slices.Sort(limits)
+	require.Equal(t, []string{
+		"CUDA_DEVICE_MEMORY_LIMIT_0=4096m",
+		"CUDA_DEVICE_MEMORY_LIMIT_1=2048m",
+		"CUDA_DEVICE_SM_LIMIT_0=30",
+		"CUDA_DEVICE_SM_LIMIT_1=50",
+	}, slices.Compact(limits))
 }
 
 // A plugin crash between the two checkpoint writes leaves the claim in

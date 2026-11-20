@@ -17,6 +17,7 @@ limitations under the License.
 package main
 
 import (
+	"cmp"
 	"context"
 	"encoding/json"
 	"fmt"
@@ -133,6 +134,7 @@ func (l deviceLib) wrapHAMiCoreGpu(parentDev *AllocatableDevice) *AllocatableDev
 	hamiGpuInfo := &HAMiGpuInfo{
 		GpuInfo: GpuInfo{
 			UUID:                  parentDev.Gpu.UUID,
+			nvmlIndex:             parentDev.Gpu.nvmlIndex,
 			minor:                 parentDev.Gpu.minor,
 			migEnabled:            parentDev.Gpu.migEnabled,
 			memoryBytes:           parentDev.Gpu.memoryBytes,
@@ -456,9 +458,14 @@ func (m *HAMiCoreManager) GetCDIContainerEdits(ctx context.Context, claim *resou
 	hamiEnvs = append(hamiEnvs, fmt.Sprintf("CUDA_DEVICE_MEMORY_SHARED_CACHE=%s", cacheFilePath))
 
 	devCapMap := m.getConsumableCapacityMap(claim)
-	idx := 0
-	for name, dev := range devs {
-		// TODO: The idx here may not equals to the index in nvidia-smi, So we need to find a solution to solve it
+	// HAMi-Core's default mapping uses the container-visible NVML order.
+	// Preserve discovery order, then number only the allocated GPUs: neither
+	// map iteration nor device minor numbers define that order.
+	deviceNames := slices.SortedFunc(maps.Keys(devs), func(a, b string) int {
+		return cmp.Compare(devs[a].HAMiGpu.nvmlIndex, devs[b].HAMiGpu.nvmlIndex)
+	})
+	for idx, name := range deviceNames {
+		dev := devs[name]
 		klog.Warningf("HAMiCoreManager GetCDIContainerEdits for dev: %s\n", name)
 		capNameSMLimit := resourceapi.QualifiedName("cores")
 		capNameMemoryLimit := resourceapi.QualifiedName("memory")
@@ -483,7 +490,6 @@ func (m *HAMiCoreManager) GetCDIContainerEdits(ctx context.Context, claim *resou
 			}
 		}
 		hamiEnvs = append(hamiEnvs, SMLimitEnv, MemoryLimitEnv)
-		idx++
 	}
 
 	return &cdiapi.ContainerEdits{

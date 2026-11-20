@@ -39,6 +39,7 @@ const (
 // Represents a specific, full, physical GPU device.
 type GpuInfo struct {
 	UUID                  string `json:"uuid"`
+	nvmlIndex             int
 	minor                 int
 	migEnabled            bool
 	vfioEnabled           bool

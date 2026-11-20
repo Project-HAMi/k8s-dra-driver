@@ -86,13 +86,14 @@ hami_devices() {
         jq -c --arg driver "${DRIVER_NAME}" '.items[] | select(.spec.driver == $driver) | .spec.devices[]?'
 }
 
-# claim_gpu_uuids CLAIM
+# claim_gpu_uuids CLAIM [REQUEST]
 #
 # The UUIDs of the GPUs allocated to CLAIM, one per line.
 claim_gpu_uuids() {
     local devices
     devices=$(kubectl get resourceclaim "$1" -o json |
-        jq -c --arg driver "${DRIVER_NAME}" '[.status.allocation.devices.results[] | select(.driver == $driver) | .device]')
+        jq -c --arg driver "${DRIVER_NAME}" --arg request "${2:-}" \
+            '[.status.allocation.devices.results[] | select(.driver == $driver) | select($request == "" or .request == $request) | .device]')
     hami_devices | jq -r --argjson names "${devices}" 'select(.name as $n | $names | index($n)) | .attributes.uuid.string'
 }
 
