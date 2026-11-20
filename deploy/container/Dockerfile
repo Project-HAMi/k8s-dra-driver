@@ -25,19 +25,21 @@ ARG HAMI_VGPUMONITOR_IMAGE=scratch
 # would override BuildKit's value and pin every build to that platform.
 ARG BUILDPLATFORM
 
-FROM --platform=${BUILDPLATFORM} nvidia/cuda:12.9.1-cudnn-devel-ubuntu20.04 AS hami-core-build
+# Built on the target platform, emulated in a multi-platform build: build.sh
+# compiles with the native compiler, so building on the build platform would
+# put that platform's libvgpu.so into every image.
+FROM nvidia/cuda:12.9.1-cudnn-devel-ubuntu20.04 AS hami-core-build
 
 ENV DEBIAN_FRONTEND=noninteractive
 # HAMi-Core requires CMake >= 3.18, while Ubuntu 20.04 ships 3.16.
-ARG BUILDARCH
 RUN set -eux; \
     apt-get update; \
     apt-get install -y --no-install-recommends ca-certificates curl git; \
     rm -rf /var/lib/apt/lists/*; \
-    case "${BUILDARCH}" in \
-        amd64) cmake_arch=x86_64; cmake_sha=0dc2e9a6860f06bf10bd8fadc03e35d9eeb4df46e33763a7e480e987758f385c ;; \
-        arm64) cmake_arch=aarch64; cmake_sha=83f8fd91d2038a56556e1400390fcfe42f79602940c494f6c6f1cdae7f9e7f40 ;; \
-        *) echo "Unsupported CMake build architecture: ${BUILDARCH}" >&2; exit 1 ;; \
+    case "$(uname -m)" in \
+        x86_64) cmake_arch=x86_64; cmake_sha=0dc2e9a6860f06bf10bd8fadc03e35d9eeb4df46e33763a7e480e987758f385c ;; \
+        aarch64) cmake_arch=aarch64; cmake_sha=83f8fd91d2038a56556e1400390fcfe42f79602940c494f6c6f1cdae7f9e7f40 ;; \
+        *) echo "Unsupported CMake architecture: $(uname -m)" >&2; exit 1 ;; \
     esac; \
     cmake_version=3.31.12; \
     curl -fsSL --retry 3 -o /tmp/cmake.tar.gz \
@@ -45,10 +47,13 @@ RUN set -eux; \
     echo "${cmake_sha}  /tmp/cmake.tar.gz" | sha256sum -c -; \
     tar -xzf /tmp/cmake.tar.gz -C /usr/local --strip-components=1; \
     rm /tmp/cmake.tar.gz
-COPY . /k8s-dra-driver
-# build.sh falls back gracefully without git. The parent .git goes too, or
-# hami-core's CMake walks up and stamps this repo's commit into libvgpu.so.
-RUN rm -rf /k8s-dra-driver/.git /k8s-dra-driver/lib/hami-core/.git
+# Only what this stage uses, so that other changes do not rebuild HAMi-Core,
+# which is slow under emulation. Without this repo's .git, hami-core's CMake
+# cannot walk up and stamp this repo's commit into libvgpu.so.
+COPY lib/hami-core /k8s-dra-driver/lib/hami-core
+COPY lib/nvidia /k8s-dra-driver/lib/nvidia
+# build.sh falls back gracefully without git.
+RUN rm -rf /k8s-dra-driver/lib/hami-core/.git
 WORKDIR /k8s-dra-driver/lib/hami-core
 RUN bash ./build.sh
 
@@ -187,7 +192,7 @@ FROM ghcr.io/nvidia/k8s-dra-driver-gpu:v25.12.0-dev-839e966a AS bash
 
 FROM ${TOOLKIT_CONTAINER_IMAGE} AS toolkit
 
-FROM vgpumonitor-smoke
+FROM vgpumonitor-smoke AS image
 
 ENV NVIDIA_DISABLE_REQUIRE="true"
 ENV NVIDIA_VISIBLE_DEVICES=all
@@ -232,3 +237,19 @@ RUN ["/usr/bin/hami-kubelet-plugin", "--version"]
 RUN ["/bin/bash", "--version"]
 
 ENTRYPOINT ["/bin/bash"]
+
+# Every ELF file in the image must match the target architecture. The smoke
+# tests above cannot catch a mismatch: binfmt runs a foreign binary anyway, and
+# libvgpu.so is never run. Runs natively on the build platform.
+FROM --platform=${BUILDPLATFORM} nvcr.io/nvidia/base/ubuntu:jammy-20251013 AS verify-arch
+ARG TARGETARCH
+RUN --mount=type=bind,from=image,target=/rootfs \
+    --mount=type=bind,source=hack/verify-elf-arch.sh,target=/verify-elf-arch.sh \
+    bash /verify-elf-arch.sh /rootfs "${TARGETARCH}" > /verify-arch.log
+
+# The default target. The mount makes it depend on verify-arch, so a default
+# build cannot produce or push an unchecked image; it adds nothing to the image.
+# `--target image` skips the check.
+FROM image
+RUN --mount=type=bind,from=verify-arch,source=/verify-arch.log,target=/verify-arch.log \
+    ["/bin/bash", "-c", "cat /verify-arch.log"]

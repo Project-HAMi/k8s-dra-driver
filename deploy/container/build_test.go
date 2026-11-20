@@ -182,8 +182,9 @@ func TestWorkflowsForwardMonitorArguments(t *testing.T) {
 						value := "${{ steps.args.outputs.hami_vgpumonitor_" + argument + " }}"
 						forwarded = forwarded && strings.Contains(step.With["build-args"], variable+"="+value)
 					}
-					if !tc.dispatch && (step.With["target"] != "vgpumonitor-smoke" || step.With["platforms"] != "linux/amd64,linux/arm64") {
-						t.Fatal("PR CI must run the monitor smoke stage for both architectures")
+					// The default target includes the monitor smoke stage and verify-arch.
+					if !tc.dispatch && (step.With["target"] != "" || step.With["platforms"] != "linux/amd64,linux/arm64") {
+						t.Fatal("PR CI must build the default target for both architectures")
 					}
 				}
 			}
@@ -256,6 +257,66 @@ func testMonitorArgumentLoading(t *testing.T, script, releaseImage string) {
 				if got := values["hami_vgpumonitor_"+key]; got != want {
 					t.Errorf("monitor %s: got %q, want %q", key, got, want)
 				}
+			}
+		})
+	}
+}
+
+// TestVerifyELFArch checks that the verify-arch script fails on an ELF file
+// for another architecture, and on a path it cannot read.
+func TestVerifyELFArch(t *testing.T) {
+	elf := func(machine byte) []byte {
+		header := make([]byte, 64)
+		copy(header, "\x7fELF")
+		header[18] = machine // e_machine, little-endian.
+		return header
+	}
+	for _, tc := range []struct {
+		name       string
+		files      map[string][]byte
+		unreadable string
+		arch       string
+		wantError  string
+	}{
+		{name: "match", files: map[string][]byte{"bin/a": elf(62), "etc/text": []byte("not an ELF file")}, arch: "amd64"},
+		{name: "mismatch", files: map[string][]byte{"bin/a": elf(62), "lib/b.so": elf(183)}, arch: "amd64", wantError: "wrong architecture: /lib/b.so"},
+		{name: "arm64", files: map[string][]byte{"lib/b.so": elf(183)}, arch: "arm64"},
+		{name: "no ELF files", files: map[string][]byte{"etc/text": []byte("x")}, arch: "amd64", wantError: "no ELF files"},
+		// The unreadable path hides the mismatch, so skipping it would pass.
+		{name: "unreadable file", files: map[string][]byte{"bin/a": elf(62), "lib/b.so": elf(183)}, unreadable: "lib/b.so", arch: "amd64", wantError: "Permission denied"},
+		{name: "unreadable directory", files: map[string][]byte{"bin/a": elf(62), "lib/b.so": elf(183)}, unreadable: "lib", arch: "amd64", wantError: "Permission denied"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			if tc.unreadable != "" && os.Geteuid() == 0 {
+				t.Skip("root can read any file")
+			}
+			root := t.TempDir()
+			for name, data := range tc.files {
+				path := filepath.Join(root, name)
+				if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
+					t.Fatal(err)
+				}
+				if err := os.WriteFile(path, data, 0o644); err != nil {
+					t.Fatal(err)
+				}
+			}
+			if tc.unreadable != "" {
+				path := filepath.Join(root, tc.unreadable)
+				if err := os.Chmod(path, 0); err != nil {
+					t.Fatal(err)
+				}
+				// Let TempDir's cleanup remove an unreadable directory.
+				t.Cleanup(func() { _ = os.Chmod(path, 0o755) })
+			}
+			output, err := exec.Command("bash", "../../hack/verify-elf-arch.sh", root, tc.arch).CombinedOutput()
+			if tc.wantError == "" {
+				if err != nil {
+					t.Fatalf("verify-elf-arch.sh: %v: %s", err, output)
+				}
+				return
+			}
+			if err == nil || !strings.Contains(string(output), tc.wantError) {
+				t.Fatalf("expected failure containing %q, got %v: %s", tc.wantError, err, output)
 			}
 		})
 	}
