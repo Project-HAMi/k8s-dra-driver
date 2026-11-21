@@ -40,6 +40,7 @@ const (
 type GpuInfo struct {
 	UUID                  string `json:"uuid"`
 	minor                 int
+	index                 int
 	migEnabled            bool
 	vfioEnabled           bool
 	memoryBytes           uint64
