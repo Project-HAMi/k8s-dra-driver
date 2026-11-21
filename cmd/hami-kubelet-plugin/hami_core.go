@@ -75,6 +75,9 @@ func (d *HAMiGpuInfo) GetDevice() resourceapi.Device {
 			"minor": {
 				IntValue: ptr.To(int64(d.minor)),
 			},
+			"index": {
+				IntValue: ptr.To(int64(d.nvmlIndex)),
+			},
 			"productName": {
 				StringValue: &d.productName,
 			},

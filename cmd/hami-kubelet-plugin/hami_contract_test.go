@@ -180,10 +180,16 @@ func claimDeviceEdits(t *testing.T, s *DeviceState, claimUID string) cdispec.Con
 }
 
 func TestHAMiGpuInfoGetDevice(t *testing.T) {
-	device := testHAMiGpu().GetDevice()
+	gpu := testHAMiGpu()
+	gpu.HAMiGpu.minor = 2
+	gpu.HAMiGpu.nvmlIndex = 1
 
-	require.Equal(t, "hami-gpu-0", device.Name)
+	device := gpu.GetDevice()
+
+	require.Equal(t, "hami-gpu-2", device.Name)
 	require.Equal(t, HAMiGpuDeviceType, *device.Attributes["type"].StringValue)
+	require.Equal(t, int64(2), *device.Attributes["minor"].IntValue)
+	require.Equal(t, int64(1), *device.Attributes["index"].IntValue)
 	require.Equal(t, "pci0000:00", *device.Attributes[deviceattribute.StandardDeviceAttributePCIeRoot].StringValue)
 	require.True(t, *device.AllowMultipleAllocations, "HAMi-Core GPUs must be shareable across claims")
 
@@ -217,11 +223,16 @@ func TestHAMiGpuInfoGetDeviceWithoutPCIeRoot(t *testing.T) {
 
 func TestWrapHAMiCoreGpu(t *testing.T) {
 	gpu := testHAMiGpu().HAMiGpu.GpuInfo
+	gpu.minor = 2
+	gpu.nvmlIndex = 1
 
 	wrapped := deviceLib{}.wrapHAMiCoreGpu(&AllocatableDevice{Gpu: &gpu})
 
 	require.Nil(t, wrapped.Gpu, "the full-GPU view must not be announced alongside the HAMi-Core device")
 	require.Equal(t, HAMiGpuDeviceType, wrapped.Type())
+	device := wrapped.GetDevice()
+	require.Equal(t, int64(2), *device.Attributes["minor"].IntValue)
+	require.Equal(t, int64(1), *device.Attributes["index"].IntValue)
 }
 
 func TestHAMiPrepareWritesCDISpec(t *testing.T) {
