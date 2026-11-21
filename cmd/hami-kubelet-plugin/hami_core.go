@@ -74,6 +74,9 @@ func (d *HAMiGpuInfo) GetDevice() resourceapi.Device {
 			"minor": {
 				IntValue: ptr.To(int64(d.minor)),
 			},
+			"index": {
+				IntValue: ptr.To(int64(d.index)),
+			},
 			"productName": {
 				StringValue: &d.productName,
 			},
@@ -134,6 +137,7 @@ func (l deviceLib) wrapHAMiCoreGpu(parentDev *AllocatableDevice) *AllocatableDev
 		GpuInfo: GpuInfo{
 			UUID:                  parentDev.Gpu.UUID,
 			minor:                 parentDev.Gpu.minor,
+			index:                 parentDev.Gpu.index,
 			migEnabled:            parentDev.Gpu.migEnabled,
 			memoryBytes:           parentDev.Gpu.memoryBytes,
 			productName:           parentDev.Gpu.productName,

@@ -456,6 +456,10 @@ func (l deviceLib) getGpuInfo(index int, device nvdev.Device) (*GpuInfo, error) 
 	if ret != nvml.SUCCESS {
 		return nil, fmt.Errorf("error getting minor number for device %d: %v", index, ret)
 	}
+	nvmlIndex, ret := device.GetIndex()
+	if ret != nvml.SUCCESS {
+		return nil, fmt.Errorf("error getting index for device %d: %v", index, ret)
+	}
 	uuid, ret := device.GetUUID()
 	if ret != nvml.SUCCESS {
 		return nil, fmt.Errorf("error getting UUID for device %d: %v", index, ret)
@@ -577,6 +581,7 @@ func (l deviceLib) getGpuInfo(index int, device nvdev.Device) (*GpuInfo, error) 
 	gpuInfo := &GpuInfo{
 		UUID:                  uuid,
 		minor:                 minor,
+		index:                 nvmlIndex,
 		migEnabled:            migEnabled,
 		memoryBytes:           memory.Total,
 		productName:           productName,
