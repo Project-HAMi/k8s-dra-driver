@@ -730,11 +730,10 @@ func (s *DeviceState) prepareDevices(ctx context.Context, claim *resourceapi.Res
 		}
 	}
 
-	// Normalize, validate, and apply all configs associated with devices that
-	// need to be prepared. Track device group configs generated from applying the
-	// config to the set of device allocation results.
-	preparedDeviceGroupConfigState := make(map[runtime.Object]*DeviceConfigState)
-	for c, results := range configResultsMap {
+	// Normalize and validate all configs associated with devices that need to
+	// be prepared.
+	validatedConfigs := make(map[runtime.Object]configapi.Interface)
+	for c := range configResultsMap {
 		// Cast the opaque config to a configapi.Interface type
 		var config configapi.Interface
 		switch castConfig := c.(type) {
@@ -758,10 +757,22 @@ func (s *DeviceState) prepareDevices(ctx context.Context, claim *resourceapi.Res
 			return nil, fmt.Errorf("error validating GPU config: %w", err)
 		}
 
+		validatedConfigs[c] = config
+	}
+
+	if featuregates.Enabled(featuregates.HAMiCoreSupport) {
+		mergeHAMiGpuGroups(configs, configResultsMap, s.allocatable)
+	}
+
+	// Apply all configs associated with devices that need to be prepared. Track
+	// device group configs generated from applying the config to the set of
+	// device allocation results.
+	preparedDeviceGroupConfigState := make(map[runtime.Object]*DeviceConfigState)
+	for c, results := range configResultsMap {
 		// Apply the config to the list of results associated with it. If this
 		// applies to a DynamicMIG device then at this point the device has not
 		// yet been created (i.e., the UUID of the MIG device is not yet known).
-		configState, err := s.applyConfig(ctx, config, claim, results)
+		configState, err := s.applyConfig(ctx, validatedConfigs[c], claim, results)
 		if err != nil {
 			return nil, fmt.Errorf("error applying config: %w", err)
 		}
@@ -848,6 +859,29 @@ func (s *DeviceState) prepareDevices(ctx context.Context, claim *resourceapi.Res
 	}
 
 	return preparedDevices, nil
+}
+
+// mergeHAMiGpuGroups moves the claim's HAMi GPUs into one config group. Each
+// group gets its own HAMi-Core edits, which number the GPUs from zero, so GPUs
+// split across groups would reuse limit indices. The merged configs differ
+// only in sharing settings, and HAMiCoreSupport excludes the features that
+// apply them.
+func mergeHAMiGpuGroups(configs []*OpaqueDeviceConfig, configResultsMap map[runtime.Object][]*resourceapi.DeviceRequestAllocationResult, allocatable AllocatableDevices) {
+	var target runtime.Object
+	for _, c := range configs {
+		results := configResultsMap[c.Config]
+		if !slices.ContainsFunc(results, func(r *resourceapi.DeviceRequestAllocationResult) bool {
+			return allocatable[r.Device].Type() == HAMiGpuDeviceType
+		}) {
+			continue
+		}
+		if target == nil {
+			target = c.Config
+			continue
+		}
+		configResultsMap[target] = append(configResultsMap[target], results...)
+		delete(configResultsMap, c.Config)
+	}
 }
 
 func (s *DeviceState) unprepareDevices(ctx context.Context, claimUID string, devices PreparedDevices) error {
