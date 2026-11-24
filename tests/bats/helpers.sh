@@ -24,6 +24,8 @@ KUBELET_PLUGIN_SELECTOR="hami-dra-driver-component=kubelet-plugin"
 # The chart under test: the local chart, which has no version to pin.
 TEST_CHART_REPO="${TEST_CHART_REPO:-chart/hami-dra-driver}"
 TEST_CHART_VERSION="${TEST_CHART_VERSION:-}"
+# The release that the upgrade test starts from.
+TEST_CHART_LASTSTABLE_VERSION="${TEST_CHART_LASTSTABLE_VERSION:-v0.2.0}"
 
 _common_setup() {
     bats_load_library bats-support
