@@ -36,14 +36,51 @@ type deviceMemoryBudget struct {
 	bytes  uint64
 }
 
-func normalizeDeviceMemory(raw, source string) (deviceMemoryBudget, error) {
-	// ParseQuantity narrows decimal exponents to int32 after parsing them.
-	if i := strings.IndexAny(raw, "eE"); i >= 0 && i+1 < len(raw) && raw[i:] != "Ei" {
-		if _, err := strconv.ParseInt(raw[i+1:], 10, 32); err != nil {
-			return deviceMemoryBudget{}, fmt.Errorf("device memory %q: invalid Quantity exponent in %q: %w", source, raw, err)
-		}
+// boundMemoryExponent checks scientific notation without expanding powers of ten.
+func boundMemoryExponent(raw string) (string, error) {
+	i := strings.IndexAny(raw, "eE")
+	if i < 0 || i+1 == len(raw) || raw[i:] == "Ei" {
+		return raw, nil
 	}
-	q, err := resource.ParseQuantity(raw)
+	exponent, err := strconv.ParseInt(raw[i+1:], 10, 32)
+	if err != nil {
+		return "", err
+	}
+	mantissa := raw[:i]
+	negative := strings.HasPrefix(mantissa, "-")
+	if negative || strings.HasPrefix(mantissa, "+") {
+		mantissa = mantissa[1:]
+	}
+	whole, fraction, _ := strings.Cut(mantissa, ".")
+	digits := whole + fraction
+	if digits == "" || strings.IndexFunc(digits, func(r rune) bool { return r < '0' || r > '9' }) >= 0 {
+		return "", resource.ErrFormatWrong
+	}
+	significant := strings.TrimLeft(digits, "0")
+	if significant == "" {
+		return "0", nil
+	}
+	// Account for the decimal point and leading zeros before bounding the value.
+	order := exponent + int64(len(significant)-len(fraction)-1)
+	if order > 18 {
+		return "", fmt.Errorf("quantity is too large for a memory budget")
+	}
+	// Quantity rounds nonzero values smaller than a nanobyte away from zero.
+	if order < int64(resource.Nano) {
+		if negative {
+			return "-1n", nil
+		}
+		return "1n", nil
+	}
+	return raw, nil
+}
+
+func normalizeDeviceMemory(raw, source string) (deviceMemoryBudget, error) {
+	bounded, err := boundMemoryExponent(raw)
+	if err != nil {
+		return deviceMemoryBudget{}, fmt.Errorf("device memory %q: invalid Quantity %q: %w", source, raw, err)
+	}
+	q, err := resource.ParseQuantity(bounded)
 	if err != nil {
 		return deviceMemoryBudget{}, fmt.Errorf("device memory %q: invalid Quantity %q: %w", source, raw, err)
 	}

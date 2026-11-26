@@ -51,6 +51,9 @@ func TestDeviceMemoryQuantity(t *testing.T) {
 		{raw: "9223372036853727232", want: 9223372036853727232},
 		{raw: "9223372036853727233", invalid: true}, {raw: "9Ei", invalid: true},
 		{raw: "1e4294967296", invalid: true}, {raw: "1e-4294967296", invalid: true},
+		{raw: "1e1000000000", invalid: true}, {raw: "1e-1000000000", want: 1 << 20},
+		{raw: "0e1000000000"}, {raw: "-1e-1000000000", invalid: true},
+		{raw: ".000001e24", want: 1000000000000786432}, {raw: "1.2.3e-1000000000", invalid: true},
 		{raw: "-1Mi", invalid: true}, {raw: "64GB", invalid: true}, {raw: "", invalid: true},
 	} {
 		t.Run(tt.raw, func(t *testing.T) {
