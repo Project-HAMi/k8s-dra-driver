@@ -68,6 +68,11 @@ bats tests/bats/test_hami_basic.bats --filter "1 pod"
 | vGPUmonitor (`test_hami_monitor.bats`) | With `monitor.enabled=true`, the metrics report each pod's memory limit on its GPU |
 | upgrade (`test_hami_upgrade.bats`) | A pod started on the last release (`TEST_CHART_LASTSTABLE_VERSION`, v0.2.0) keeps running and limited after upgrading to the chart under test, which then cleans up after it and prepares new claims |
 
+The published v0.2.0 arm64 image ships an x86-64 `libvgpu.so`, so on an arm64
+node the upgrade test is skipped. To run it there, build v0.2.0 from its tag
+with the Dockerfile on `main`, and load it into the kind node as
+`projecthami/k8s-dra-driver:v0.2.0`.
+
 ## Not covered by Mokka
 
 Mokka does not execute CUDA, so these stay in the real-GPU test plan:

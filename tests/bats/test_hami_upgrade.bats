@@ -42,16 +42,34 @@ kubelet_plugin_image() {
         -o jsonpath='{.spec.template.spec.containers[0].image}'
 }
 
+# The ELF machine of the HAMi-Core library that the driver installed on the
+# node, and the one that the node needs, as hex: 3e for x86-64, b7 for arm64.
+node_libvgpu_machine() {
+    node_exec sh -c 'od -An -tx1 -j18 -N1 /usr/local/vgpu/libvgpu.so | tr -d " \n"'
+}
 
+node_machine() {
+    case "$(node_exec uname -m)" in
+    x86_64) echo 3e ;;
+    aarch64) echo b7 ;;
+    esac
+}
+
+# bats test_tags=fastfeedback
 @test "HAMi: upgrade from the last release keeps a running pod, and cleans up after it" {
     # Start from a node without the driver or its state, as on a fresh install.
-    helm uninstall "${DRIVER_RELEASE}" -n "${DRIVER_NAMESPACE}" --wait --timeout 2m
+    helm uninstall "${DRIVER_RELEASE}" -n "${DRIVER_NAMESPACE}" --ignore-not-found --wait --timeout 2m
     kubectl wait --for=delete pods -n "${DRIVER_NAMESPACE}" -l "${KUBELET_PLUGIN_SELECTOR}" --timeout=60s
     node_exec rm -rf "/var/lib/kubelet/plugins/${DRIVER_NAME}"
 
     # The release's chart defaults to an older image tag, so set its own.
     iupgrade_wait "${LASTSTABLE_CHART}" "" --set-string image.tag="${TEST_CHART_LASTSTABLE_VERSION}"
     assert_equal "$(kubelet_plugin_image)" "projecthami/k8s-dra-driver:${TEST_CHART_LASTSTABLE_VERSION}"
+    # The published v0.2.0 arm64 image ships an x86-64 libvgpu.so, which
+    # cannot limit pods on an arm64 node.
+    if [[ "$(node_libvgpu_machine)" != "$(node_machine)" ]]; then
+        skip "${TEST_CHART_LASTSTABLE_VERSION} installs a libvgpu.so for another architecture"
+    fi
 
     local _podname="pod-template-gpu"
     kubectl apply -f tests/bats/specs/template-pod.yaml
