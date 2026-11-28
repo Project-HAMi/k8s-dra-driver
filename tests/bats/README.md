@@ -19,7 +19,7 @@ from this tree, creates the kind cluster `hami-e2e`, installs
 [Mokka](https://github.com/NVIDIA/k8s-test-infra) to mock NVML, the driver root
 and the device nodes, runs every `tests/bats/*.bats` file, and deletes the
 cluster. It stops if that cluster already exists, unless
-`RECREATE_CLUSTER=true`. It needs docker, git, kind, kubectl, helm and jq,
+`RECREATE_CLUSTER=true`. It needs docker, git, kind, kubectl, helm, jq and curl,
 plus make and go to build the image, and fetches pinned versions of bats
 itself. The header of the script lists its settings.
 
@@ -66,6 +66,12 @@ bats tests/bats/test_hami_basic.bats --filter "1 pod"
 | kubelet plugin restart | A running pod keeps running, is not restarted and is still limited after the plugin restarts |
 | pod deletion | Deleting a pod with a templated claim removes its cache directory, CDI spec and checkpoint entry from the node |
 | vGPUmonitor (`test_hami_monitor.bats`) | With `monitor.enabled=true`, the metrics report each pod's memory limit on its GPU |
+| upgrade (`test_hami_upgrade.bats`) | A pod started on the last release (`TEST_CHART_LASTSTABLE_VERSION`, v0.2.0) keeps running and limited after upgrading to the chart under test, which then cleans up after it and prepares new claims |
+
+The published v0.2.0 arm64 image ships an x86-64 `libvgpu.so`, so on an arm64
+node the upgrade test is skipped. To run it there, build v0.2.0 from its tag
+with the Dockerfile on `main`, and load it into the kind node as
+`projecthami/k8s-dra-driver:v0.2.0`.
 
 ## Not covered by Mokka
 

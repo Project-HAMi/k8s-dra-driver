@@ -18,8 +18,8 @@
 # driver and GPUs, builds the driver image from this tree, and runs the BATS
 # suite under tests/bats, which installs the driver with its Helm chart.
 #
-# Requires docker, git, kind, kubectl, helm and jq, plus make and go to build
-# the image.
+# Requires docker, git, kind, kubectl, helm, jq and curl, plus make and go to
+# build the image.
 #
 # Environment:
 #   KIND_CLUSTER_NAME  kind cluster to create (hami-e2e)
@@ -96,7 +96,7 @@ cleanup() {
     exit "${rc}"
 }
 
-tools=(docker git kind kubectl helm jq)
+tools=(docker git kind kubectl helm jq curl)
 if [[ "${SKIP_IMAGE_BUILD}" != "true" ]]; then
     # versions.mk runs go to find the toolkit image.
     tools+=(make go)
