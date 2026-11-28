@@ -57,6 +57,12 @@ node_machine() {
 
 # bats test_tags=fastfeedback
 @test "HAMi: upgrade from the last release keeps a running pod, and cleans up after it" {
+    # helm and kubectl use the current context, and node_exec the kind node:
+    # check that they reach the same node before deleting its state.
+    local machine_id
+    machine_id=$(node_exec cat /etc/machine-id)
+    assert_equal "$(kubectl get node "${KIND_CLUSTER_NAME}-control-plane" -o jsonpath='{.status.nodeInfo.machineID}')" "${machine_id}"
+
     # Start from a node without the driver or its state, as on a fresh install.
     helm uninstall "${DRIVER_RELEASE}" -n "${DRIVER_NAMESPACE}" --ignore-not-found --wait --timeout 2m
     kubectl wait --for=delete pods -n "${DRIVER_NAMESPACE}" -l "${KUBELET_PLUGIN_SELECTOR}" --timeout=60s
